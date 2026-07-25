@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameState, ShotRequest, ShotFrame, Vec2 } from "../../core/types";
-import { CUSHION, CUSHIONS, POCKET_RADIUS, POCKETS, TABLE_HEIGHT, TABLE_WIDTH, BALL_RADIUS } from "../../core/constants";
-import { predictShot, type AimPrediction } from "../../core/aiming";
-import { drawBall, tableToCanvas, type ViewTransform } from "./ballRenderer";
+import { TABLE_HEIGHT, TABLE_WIDTH } from "../../core/constants";
+import { clampCuePlacement, placementModeForPhase } from "../../core/rules";
+import { drawBall, type ViewTransform } from "./ballRenderer";
+import { drawTable, TABLE_RAIL_PX } from "./tableRenderer";
+import { drawAiming, drawBallInHandHint, drawCueStick, powerMeterClass } from "./cueRenderer";
 import { usePoolAnimation } from "../../hooks/usePoolAnimation";
 import { useCueInput, loadControlMode, saveControlMode, type ControlMode } from "../../hooks/useCueInput";
+import { ShotSidebar, EnglishPickerModal, type EnglishOffset } from "./ShotSidebar";
 
 interface PoolTableProps {
   state: GameState;
@@ -16,55 +19,97 @@ interface PoolTableProps {
   onFire: (shot: ShotRequest) => void;
   onPlaceCueBall: (pos: Vec2) => void;
   onConfirmPlacement: () => void;
-  onRequestBallInHand: () => void;
+  onAim?: (angle: number, power: number) => void;
 }
 
-const MARGIN = 28; // px around the felt for the wooden rail
+/** Thin wood border around the felt (unchanged look). */
+const RAIL = TABLE_RAIL_PX;
+/** Empty transparent pad outside the wood so the cue can overflow visibly. */
+const CUE_PAD = 40;
+const INSET = RAIL + CUE_PAD;
+const PLACE_THROTTLE_MS = 40;
 
-export function PoolTable({ state, isMyTurn, amSpectator, isHost, engineRef, lastFrame, onFire, onPlaceCueBall, onConfirmPlacement, onRequestBallInHand }: PoolTableProps) {
+export function PoolTable({
+  state, isMyTurn, amSpectator, isHost, engineRef, lastFrame,
+  onFire, onPlaceCueBall, onConfirmPlacement, onAim,
+}: PoolTableProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, ox: 0, oy: 0 });
-  const [size, setSize] = useState({ w: 800, h: 400 });
+  const [size, setSize] = useState({ w: 800, h: 464 });
   const [controlMode, setControlMode] = useState<ControlMode>(() => loadControlMode());
+  const [english, setEnglish] = useState<EnglishOffset>({ side: 0, top: 0 });
+  const [englishOpen, setEnglishOpen] = useState(false);
+  const [barrePower, setBarrePower] = useState(0);
+  const englishRef = useRef(english);
+  englishRef.current = english;
+  const timeRef = useRef(0);
+  /** Optimistic cue position while placing — avoids network/state lag desync. */
+  const localCuePosRef = useRef<Vec2 | null>(null);
+  const [, bumpPreview] = useState(0);
+  const lastPlaceSent = useRef(0);
 
-  // Responsive sizing: keep the felt aspect ratio (2:1).
+  const placing = isMyTurn && state.ballInHand;
+
+  useEffect(() => {
+    if (!placing) localCuePosRef.current = null;
+  }, [placing]);
+
+  useEffect(() => {
+    if (!(isMyTurn && !amSpectator && state.phase !== "RESOLVING" && state.phase !== "GAME_OVER") || placing) {
+      setEnglishOpen(false);
+    }
+  }, [isMyTurn, amSpectator, state.phase, placing]);
+
   useEffect(() => {
     const parent = canvasRef.current?.parentElement;
     if (!parent) return;
     const ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect;
-      const w = Math.max(320, r.width);
-      const h = w / (TABLE_WIDTH / TABLE_HEIGHT);
-      setSize({ w, h });
+      // Felt + wood sized as before (only RAIL inset). Cue pad is extra outside.
+      const layoutW = Math.max(320, r.width);
+      const feltW = Math.max(1, layoutW - RAIL * 2);
+      const scale = feltW / TABLE_WIDTH;
+      const feltH = TABLE_HEIGHT * scale;
+      setSize({
+        w: feltW + INSET * 2,
+        h: feltH + INSET * 2,
+      });
     });
     ro.observe(parent);
     return () => ro.disconnect();
   }, []);
 
-  // Recompute the view transform whenever the canvas size changes.
   useEffect(() => {
-    const scale = (size.w - MARGIN * 2) / TABLE_WIDTH;
-    viewRef.current = { scale, ox: MARGIN, oy: MARGIN };
+    const scale = (size.w - INSET * 2) / TABLE_WIDTH;
+    viewRef.current = { scale, ox: INSET, oy: INSET };
     const canvas = canvasRef.current;
-    if (canvas) {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = size.w * dpr;
-      canvas.height = size.h * dpr;
-      canvas.style.width = `${size.w}px`;
-      canvas.style.height = `${size.h}px`;
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = size.w * dpr;
+    canvas.height = size.h * dpr;
+    canvas.style.width = `${size.w}px`;
+    canvas.style.height = `${size.h}px`;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }, [size]);
 
-  const getAuthoritativeBalls = useCallback(() => engineRef.current?.state?.balls ?? state.balls ?? [], [engineRef, state.balls]);
+  const resolveBalls = useCallback(() => {
+    const base = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
+    if (!localCuePosRef.current) return base;
+    return base.map((b: any) =>
+      b.id === 0 ? { ...b, pos: { ...localCuePosRef.current! }, pocketed: false } : b,
+    );
+  }, [isHost, engineRef, state.balls]);
 
-  const getStaticBalls = useCallback(() => state.balls ?? [], [state.balls]);
+  const getAuthoritativeBalls = useCallback(() => resolveBalls(), [resolveBalls]);
+  const getStaticBalls = useCallback(() => resolveBalls(), [resolveBalls]);
 
   const getCueBallPos = useCallback((): Vec2 | null => {
-    const cue = state.balls.find((b) => b.id === 0 && !b.pocketed);
+    if (localCuePosRef.current) return localCuePosRef.current;
+    const balls = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
+    const cue = balls.find((b: any) => b.id === 0 && !b.pocketed);
     return cue ? cue.pos : null;
-  }, [state.balls]);
+  }, [isHost, engineRef, state.balls]);
 
   const toTable = useCallback((clientX: number, clientY: number): Vec2 | null => {
     const canvas = canvasRef.current;
@@ -74,24 +119,59 @@ export function PoolTable({ state, isMyTurn, amSpectator, isHost, engineRef, las
     return { x: (clientX - rect.left - v.ox) / v.scale, y: (clientY - rect.top - v.oy) / v.scale };
   }, []);
 
+  const handlePlace = useCallback((pos: Vec2) => {
+    const balls = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
+    const mode = placementModeForPhase(state.phase);
+    const next = clampCuePlacement(pos, mode, balls);
+    if (!next) return; // stuck against a ball / invalid — keep last legal preview
+    localCuePosRef.current = next;
+    bumpPreview((n) => n + 1);
+    const now = performance.now();
+    if (now - lastPlaceSent.current >= PLACE_THROTTLE_MS) {
+      lastPlaceSent.current = now;
+      onPlaceCueBall(next);
+    }
+  }, [isHost, engineRef, state.balls, state.phase, onPlaceCueBall]);
+
+  const handleConfirm = useCallback(() => {
+    const balls = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
+    const mode = placementModeForPhase(state.phase);
+    const raw = localCuePosRef.current;
+    const pos = raw ? clampCuePlacement(raw, mode, balls) : null;
+    if (pos) {
+      localCuePosRef.current = pos;
+      onPlaceCueBall(pos);
+    }
+    onConfirmPlacement();
+  }, [isHost, engineRef, state.balls, state.phase, onPlaceCueBall, onConfirmPlacement]);
+
   const handleFire = useCallback((angle: number, power: number) => {
-    onFire({ angle, power, spin: 0 });
+    const e = englishRef.current;
+    onFire({ angle, power, spinSide: e.side, spinTop: e.top });
+    setBarrePower(0);
   }, [onFire]);
 
+  const canShoot = isMyTurn && !amSpectator && state.phase !== "RESOLVING" && state.phase !== "GAME_OVER";
+  const ballsInMotion = state.phase === "RESOLVING";
+  const sidebarEnabled = canShoot && !placing;
+
   const cue = useCueInput({
-    enabled: isMyTurn && !amSpectator && state.phase !== "RESOLVING" && state.phase !== "GAME_OVER",
-    ballInHand: isMyTurn && state.ballInHand,
+    enabled: canShoot,
+    inputPaused: englishOpen,
+    ballInHand: placing,
     controlMode,
     getCueBallPos,
     toTable,
     onFire: handleFire,
-    onPlaceCueBall,
-    onConfirmPlacement,
+    onPlaceCueBall: handlePlace,
+    onConfirmPlacement: handleConfirm,
+    onAimChange: onAim,
   });
 
-  const canShoot = isMyTurn && !amSpectator && state.phase !== "RESOLVING" && state.phase !== "GAME_OVER";
+  const handleBarreRelease = useCallback((p: number) => {
+    handleFire(cue.aimAngleRef.current, p);
+  }, [handleFire, cue.aimAngleRef]);
 
-  // The renderer the animation loop calls every frame.
   const drawRef = useRef<((balls: any[]) => void) | null>(null);
   drawRef.current = (balls: any[]) => {
     const canvas = canvasRef.current;
@@ -99,86 +179,121 @@ export function PoolTable({ state, isMyTurn, amSpectator, isHost, engineRef, las
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const v = viewRef.current;
-    const W = size.w, H = size.h;
+    timeRef.current = performance.now();
+    drawTable(ctx, v, size.w, size.h, timeRef.current);
 
-    // Wooden rail
-    ctx.fillStyle = "#3b2412";
-    ctx.fillRect(0, 0, W, H);
+    // Ensure optimistic cue pos is drawn even if animation snapshot is one frame behind.
+    const drawn = localCuePosRef.current
+      ? balls.map((b: any) =>
+          b.id === 0 ? { ...b, pos: { ...localCuePosRef.current! }, pocketed: false } : b,
+        )
+      : balls;
 
-    // Felt
-    const fx = v.ox, fy = v.oy, fw = TABLE_WIDTH * v.scale, fh = TABLE_HEIGHT * v.scale;
-    const grad = ctx.createLinearGradient(fx, fy, fx, fy + fh);
-    grad.addColorStop(0, "#0e4a36");
-    grad.addColorStop(1, "#0a2c22");
-    ctx.fillStyle = grad;
-    ctx.fillRect(fx, fy, fw, fh);
+    for (const b of drawn) drawBall(ctx, b, v);
 
-    // Cushions (drawn as inner border segments matching CUSHIONS gaps)
-    ctx.strokeStyle = "#1b4d3a";
-    ctx.lineWidth = CUSHION * v.scale;
-    ctx.lineCap = "round";
-    CUSHIONS.forEach((seg) => {
-      const a = tableToCanvas(seg.a, v), b = tableToCanvas(seg.b, v);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    });
+    const cueBall = drawn.find((b: any) => b.id === 0 && !b.pocketed);
+    if (!cueBall) return;
 
-    // Pockets
-    POCKETS.forEach((p) => {
-      const c = tableToCanvas(p, v);
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, POCKET_RADIUS * v.scale, 0, Math.PI * 2);
-      ctx.fillStyle = "#000";
-      ctx.fill();
-      ctx.strokeStyle = "#c9a14a";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    });
-
-    // Balls
-    for (const b of balls) drawBall(ctx, b, v);
-
-    // Aim + cue stick (only when the player may shoot and balls are at rest)
     if (canShoot) {
-      const cueBall = balls.find((b: any) => b.id === 0 && !b.pocketed);
-      if (cueBall) {
-        if (!state.ballInHand) drawAiming(ctx, cueBall, balls, cue.aimAngle, v);
-        drawCueStick(ctx, cueBall, cue.aimAngle, cue.power, cue.charging, v);
-        if (state.ballInHand) drawBallInHandHint(ctx, cueBall, v);
-      }
+      if (!placing) drawAiming(ctx, cueBall, drawn, cue.aimAngle, v);
+      const stickPower = controlMode === "barre" ? barrePower : cue.power;
+      const stickCharging = controlMode === "barre" ? barrePower > 0 : cue.charging;
+      drawCueStick(ctx, cueBall, cue.aimAngle, stickPower, stickCharging, v);
+      if (placing) drawBallInHandHint(ctx, cueBall, v);
+    } else if (
+      state.aim.shooterId &&
+      state.phase !== "RESOLVING" &&
+      state.phase !== "GAME_OVER" &&
+      !state.ballInHand
+    ) {
+      drawAiming(ctx, cueBall, drawn, state.aim.angle, v, true);
+      drawCueStick(ctx, cueBall, state.aim.angle, state.aim.power, state.aim.power > 0, v, true);
     }
   };
 
-  usePoolAnimation({ isHost, getAuthoritativeBalls, getStaticBalls, lastFrame, drawRef });
+  usePoolAnimation({
+    isHost,
+    ballsInMotion,
+    getAuthoritativeBalls,
+    getStaticBalls,
+    lastFrame,
+    drawRef,
+  });
 
-  const chooseMode = (m: ControlMode) => { setControlMode(m); saveControlMode(m); };
+  const chooseMode = (m: ControlMode) => { setControlMode(m); saveControlMode(m); setBarrePower(0); };
 
   return (
-    <div className="w-full flex flex-col items-center">
-      <canvas id="pool-canvas" ref={canvasRef} className="pool-canvas rounded-2xl shadow-2xl" />
-      <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-400">
+    <div className="w-full flex flex-col items-center gap-3">
+      <div className="w-full flex gap-2 items-stretch justify-center relative">
+        <ShotSidebar
+          enabled={sidebarEnabled}
+          showPowerSlider={controlMode === "barre"}
+          english={english}
+          onOpenEnglish={() => setEnglishOpen(true)}
+          power={barrePower}
+          onPowerChange={setBarrePower}
+          onFire={handleBarreRelease}
+        />
+        <div className="flex-1 min-w-0 relative z-0 overflow-visible">
+          <canvas
+            id="pool-canvas"
+            ref={canvasRef}
+            className="pool-canvas relative z-0"
+            style={{
+              borderRadius: 10,
+              background: "transparent",
+              display: "block",
+              marginLeft: -CUE_PAD,
+              marginRight: -CUE_PAD,
+              width: size.w,
+              height: size.h,
+            }}
+          />
+          <EnglishPickerModal
+            open={englishOpen}
+            english={english}
+            onEnglishChange={setEnglish}
+            onClose={() => setEnglishOpen(false)}
+          />
+          {canShoot && controlMode !== "barre" && cue.charging && (
+            <div className="absolute left-3 bottom-3 z-10 w-40 pointer-events-none">
+              <div className="text-[10px] uppercase tracking-widest text-amber-200/80 mb-1 font-bold">Puissance</div>
+              <div className="h-2 rounded-full bg-zinc-950/70 border border-zinc-700 overflow-hidden">
+                <div
+                  className={`h-full bg-gradient-to-r ${powerMeterClass(cue.power)} transition-[width] duration-75`}
+                  style={{ width: `${Math.round(cue.power * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-400">
         {amSpectator ? (
-          <span>👁️ Mode spectateur — vous regardez la partie.</span>
+          <span>Mode spectateur — lecture seule.</span>
         ) : isMyTurn ? (
           <>
             <span>
-              {state.ballInHand
-                ? "Bille en main : glissez la blanche puis relâchez pour placer."
+              {placing
+                ? "Bille en main : bougez la souris pour placer (sans clic) · Clic gauche : valider."
                 : controlMode === "standard"
-                ? "Clic droit : viser · Clic gauche : tirer en arrière pour charger · Relâcher : tirer."
-                : "Survol : viser · Clic gauche : tirer en arrière pour charger · Relâcher : tirer."}
+                ? "Clic droit : viser · Clic gauche : charger · Relâcher : tirer. Effet : petite bille à gauche."
+                : controlMode === "barre"
+                ? "Clic droit : viser · Effet (bille) + force à gauche · Tirer pour valider."
+                : "Survol : viser · Clic gauche : charger · Relâcher : tirer. Effet : bille à gauche."}
             </span>
-            {!state.ballInHand && (
-              <button onClick={onRequestBallInHand}
-                className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 font-bold transition-all">
-                🤚 Replacer la bille
-              </button>
-            )}
-            <div className="flex items-center gap-1 ml-1">
+            <div className="flex items-center gap-1 ml-1 flex-wrap justify-center">
               <span className="text-[10px] uppercase tracking-widest text-zinc-500">Contrôle</span>
-              <button onClick={() => chooseMode("standard")}
-                className={`px-2 py-1 rounded-lg font-bold border transition-all ${controlMode === "standard" ? "bg-amber-600 border-amber-400 text-zinc-900" : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600"}`}>Standard</button>
-              <button onClick={() => chooseMode("hover")}
-                className={`px-2 py-1 rounded-lg font-bold border transition-all ${controlMode === "hover" ? "bg-amber-600 border-amber-400 text-zinc-900" : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600"}`}>Survol</button>
+              {([
+                ["standard", "Standard"],
+                ["hover", "Survol"],
+                ["barre", "Barre"],
+              ] as const).map(([id, label]) => (
+                <button key={id} type="button" onClick={() => chooseMode(id)}
+                  className={`px-2 py-1 rounded-lg font-bold border transition-all ${
+                    controlMode === id ? "bg-amber-600 border-amber-400 text-zinc-900" : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600"
+                  }`}>{label}</button>
+              ))}
             </div>
           </>
         ) : (
@@ -187,53 +302,6 @@ export function PoolTable({ state, isMyTurn, amSpectator, isHost, engineRef, las
       </div>
     </div>
   );
-}
-
-function drawAiming(ctx: CanvasRenderingContext2D, cueBall: any, balls: any[], angle: number, v: ViewTransform) {
-  const pred: AimPrediction = predictShot(cueBall, balls, angle);
-  ctx.lineWidth = 2;
-  pred.segments.forEach((s) => {
-    const a = tableToCanvas(s.from, v), b = tableToCanvas(s.to, v);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-    if (s.kind === "main") { ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.setLineDash([8, 6]); }
-    else if (s.kind === "target") { ctx.strokeStyle = "rgba(250,204,21,0.9)"; ctx.setLineDash([]); }
-    else { ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.setLineDash([4, 4]); }
-    ctx.stroke();
-  });
-  ctx.setLineDash([]);
-  if (pred.ghostBall) {
-    const g = tableToCanvas(pred.ghostBall, v);
-    ctx.beginPath(); ctx.arc(g.x, g.y, BALL_RADIUS * v.scale, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1.5; ctx.stroke();
-  }
-}
-
-function drawCueStick(ctx: CanvasRenderingContext2D, cueBall: any, angle: number, power: number, charging: boolean, v: ViewTransform) {
-  const c = tableToCanvas(cueBall.pos, v);
-  const r = BALL_RADIUS * v.scale;
-  const pull = (charging ? power : 0) * 0.45 * v.scale + 0.06 * v.scale; // pull-back in px
-  const gap = r + 6 + pull;
-  const len = 320;
-  const back = { x: c.x - Math.cos(angle) * gap, y: c.y - Math.sin(angle) * gap };
-  const tip = { x: c.x - Math.cos(angle) * (gap + len), y: c.y - Math.sin(angle) * (gap + len) };
-  ctx.save();
-  ctx.lineCap = "round";
-  ctx.strokeStyle = "#c9a14a";
-  ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(back.x, back.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
-  ctx.strokeStyle = "#7a5a1f";
-  ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(back.x, back.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
-  // Tip
-  ctx.beginPath(); ctx.arc(back.x, back.y, 3, 0, Math.PI * 2); ctx.fillStyle = "#1e3a5f"; ctx.fill();
-  ctx.restore();
-}
-
-function drawBallInHandHint(ctx: CanvasRenderingContext2D, cueBall: any, v: ViewTransform) {
-  const c = tableToCanvas(cueBall.pos, v);
-  ctx.beginPath(); ctx.arc(c.x, c.y, BALL_RADIUS * v.scale + 4, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(250,204,21,0.8)"; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.stroke();
-  ctx.setLineDash([]);
 }
 
 export default PoolTable;

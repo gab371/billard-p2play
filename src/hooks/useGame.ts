@@ -5,6 +5,7 @@ import { sanitizeGameState, shotPayload } from "../network/protocol";
 import type { NetworkMessage } from "../network/protocol";
 import type { GameState, ShotRequest, TeamId, Ball } from "../core/types";
 import { DT, FPS, STREAM_HZ } from "../core/constants";
+import { registerEngineGetter } from "../testHooks";
 
 interface UseGameOptions {
   externalPeerManager?: import("p2play-core").PeerManagerLike;
@@ -31,6 +32,10 @@ export function useGame(options?: UseGameOptions) {
   const victoryPlayedRef = useRef<boolean>(false);
   const [localPlayerName, setLocalPlayerName] = useState<string>(options?.playerName || "");
   const [localPlayerAvatar, setLocalPlayerAvatar] = useState<string>(options?.playerAvatar || "🎱");
+
+  useEffect(() => {
+    registerEngineGetter(() => gameEngineRef.current);
+  }, []);
 
   const broadcastSanitizedStates = useCallback((engineState: GameState, overridePeerId?: string) => {
     const activePeerId = overridePeerId || myPeerId;
@@ -175,7 +180,12 @@ export function useGame(options?: UseGameOptions) {
         case "CONFIRM_PLACEMENT": engine.confirmPlacement(playerId); break;
         case "REQUEST_BALL_IN_HAND": engine.requestBallInHand(playerId); break;
         case "FIRE_SHOT": {
-          const s: ShotRequest = { angle: payload.angle, power: payload.power, spin: payload.spin ?? 0 };
+          const s: ShotRequest = {
+            angle: payload.angle,
+            power: payload.power,
+            spinSide: payload.spinSide ?? payload.spin ?? 0,
+            spinTop: payload.spinTop ?? 0,
+          };
           engine.setAim(playerId, s.angle, s.power);
           const pre = engine.fireShot(playerId, s);
           if (pre.length === 0 && engine.state.phase === "RESOLVING") {

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { GameLog } from "../../core/types";
 
 const COLOR: Record<GameLog["type"], string> = {
@@ -18,12 +19,17 @@ interface LogConsoleProps {
 }
 
 export function LogConsole({ logs }: LogConsoleProps) {
+  // Newest events first.
+  const ordered = useMemo(() => [...logs].reverse(), [logs]);
+
   return (
-    <div className="bg-zinc-900/60 backdrop-blur-md border border-zinc-800 rounded-3xl p-5 shadow-xl flex flex-col h-full min-h-[200px]">
+    <div className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-5 shadow-xl flex flex-col h-full min-h-[200px]">
       <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Journal</h3>
       <div className="flex-1 overflow-y-auto space-y-1.5 pr-1.5 scrollbar-thin">
-        {logs.length === 0 && <div className="text-zinc-600 text-center py-8 text-xs">Aucun événement.</div>}
-        {logs.map((log) => (
+        {ordered.length === 0 && (
+          <div className="text-zinc-600 text-center py-8 text-xs">Aucun événement.</div>
+        )}
+        {ordered.map((log) => (
           <div key={log.id} className={`text-xs leading-relaxed ${COLOR[log.type]}`}>
             <span className="text-zinc-600 font-mono mr-1.5">{log.timestamp}</span>
             {log.message}

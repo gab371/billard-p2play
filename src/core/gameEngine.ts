@@ -3,28 +3,21 @@
 // Physics is delegated to `physics.ts`, rule decisions to `rules.ts`.
 
 import type {
-  GameState, ShotRequest, TeamId, GameLog,
+  GameState, ShotRequest, TeamId,
 } from "./types";
-import { MAX_SHOT_SPEED, MIN_SHOT_SPEED } from "./constants";
+import { MAX_SHOT_SPEED, MIN_SHOT_SPEED, SIDE_SPIN_SPEED } from "./constants";
 import { buildRack, resetCueBall } from "./rack";
 import { isMoving, step, type PhysicsEvent } from "./physics";
-import { evaluateShot, recomputeRemaining, clampCuePlacement } from "./rules";
-
-let logSeq = 0;
-function makeLog(message: string, type: GameLog["type"]): GameLog {
-  return {
-    id: `log_${Date.now()}_${logSeq++}`,
-    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    message,
-    type,
-  };
-}
+import { evaluateShot, recomputeRemaining, clampCuePlacement, placementModeForPhase } from "./rules";
+import { logShotResolution, pushLog, shooterName, teamLabel } from "./journal";
 
 export class PoolGameEngine {
   public state: GameState;
   private teamShooterIndex: Record<TeamId, number> = { SOLIDS: 0, STRIPES: 0 };
   private preShotPocketed: Set<number> = new Set();
   private shotEvents: PhysicsEvent[] = [];
+  /** Captured in fireShot because phase becomes RESOLVING before finishShot. */
+  private preShotWasBreak = false;
 
   constructor() {
     this.state = {
@@ -87,7 +80,8 @@ export class PoolGameEngine {
     const solids = this.state.players.filter((p) => p.team === "SOLIDS");
     const stripes = this.state.players.filter((p) => p.team === "STRIPES");
     if (solids.length === 0 && stripes.length === 0) {
-      this.state.logs.push(makeLog("Aucun joueur assigné à une équipe.", "warning"));
+      this.state.logs = [];
+      pushLog(this.state, "Aucun joueur assigné à une équipe.", "warning");
       return;
     }
     // Pick the first team that has players (the other may be empty → practice mode).
@@ -102,11 +96,16 @@ export class PoolGameEngine {
     this.state.activeShooterId = firstMembers[0].id;
     this.state.ballInHand = true; // break: place cue ball in the kitchen
     this.state.phase = "BREAKING";
+    this.state.logs = [];
     recomputeRemaining(this.state);
     if (solids.length === 0 || stripes.length === 0) {
-      this.state.logs.push(makeLog("Mode entraînement : une seule équipe présente.", "info"));
+      pushLog(this.state, "Mode entraînement : une seule équipe présente.", "info");
     }
-    this.state.logs.push(makeLog("Cassure ! Que la partie commence.", "phase"));
+    pushLog(
+      this.state,
+      `Cassure ! ${shooterName(this.state)} (${teamLabel(firstTeam)}) commence.`,
+      "phase",
+    );
   }
 
   // --- Aiming / ball-in-hand ----------------------------------------------
@@ -120,7 +119,10 @@ export class PoolGameEngine {
     if (!this.state.ballInHand || this.state.activeShooterId !== shooterId) return;
     const cue = this.state.balls.find((b) => b.id === 0);
     if (!cue) return;
-    cue.pos = clampCuePlacement(pos);
+    const mode = placementModeForPhase(this.state.phase);
+    const next = clampCuePlacement(pos, mode, this.state.balls);
+    if (!next) return; // overlap — keep previous position
+    cue.pos = next;
     cue.pocketed = false;
     cue.pocketIndex = null;
   }
@@ -131,7 +133,10 @@ export class PoolGameEngine {
     this.state.ballInHand = false;
   }
 
-  /** Re-enable ball-in-hand for the active shooter (so they can reposition). */
+  /**
+   * Test / debug only — not exposed in the player UI (Idée 9).
+   * Re-enable ball-in-hand for the active shooter.
+   */
   requestBallInHand(shooterId: string): void {
     if (this.state.activeShooterId !== shooterId) return;
     if (this.state.phase !== "SHOOTING" && this.state.phase !== "BREAKING" && this.state.phase !== "BALL_IN_HAND") return;
@@ -147,16 +152,40 @@ export class PoolGameEngine {
     const cue = this.state.balls.find((b) => b.id === 0);
     if (!cue || cue.pocketed) return [];
 
-    // Snapshot pre-shot pocketed set to compute newly potted balls.
+    this.preShotWasBreak = this.state.phase === "BREAKING";
     this.preShotPocketed = new Set(this.state.balls.filter((b) => b.pocketed).map((b) => b.id));
     this.shotEvents = [];
 
-    const speed = MIN_SHOT_SPEED + (MAX_SHOT_SPEED - MIN_SHOT_SPEED) * Math.max(0, Math.min(1, shot.power));
-    cue.vel = { x: Math.cos(shot.angle) * speed, y: Math.sin(shot.angle) * speed };
+    const power = Math.max(0, Math.min(1, shot.power));
+    const speed = MIN_SHOT_SPEED + (MAX_SHOT_SPEED - MIN_SHOT_SPEED) * power;
+    const side = Math.max(-1, Math.min(1, shot.spinSide ?? 0));
+    const top = Math.max(-1, Math.min(1, shot.spinTop ?? 0));
+    const fx = Math.cos(shot.angle);
+    const fy = Math.sin(shot.angle);
+    // Mild side kick at strike; follow/draw applies after the first object hit.
+    const px = -fy;
+    const py = fx;
+    const sideKick = side * SIDE_SPIN_SPEED * (0.35 + 0.65 * power);
+    cue.vel = {
+      x: fx * speed + px * sideKick,
+      y: fy * speed + py * sideKick,
+    };
+    cue.spinTop = top;
+    cue.spinSide = side;
 
     this.state.ballInHand = false;
     this.state.phase = "RESOLVING";
     this.state.shotId += 1;
+
+    const who = shooterName(this.state);
+    const team = this.state.activeTeam;
+    const teamBit = team ? ` (${teamLabel(team)})` : "";
+    const pct = Math.round(power * 100);
+    if (this.preShotWasBreak) {
+      pushLog(this.state, `${who}${teamBit} casse (${pct}%).`, "shot");
+    } else {
+      pushLog(this.state, `${who}${teamBit} tire (${pct}%).`, "shot");
+    }
     return [];
   }
 
@@ -180,55 +209,82 @@ export class PoolGameEngine {
     }
 
     recomputeRemaining(this.state);
-    const outcome = evaluateShot(this.state, this.shotEvents, newlyPocketed);
+    const outcome = evaluateShot(this.state, this.shotEvents, newlyPocketed, this.preShotWasBreak);
     const team = this.state.activeTeam!;
+    const who = shooterName(this.state);
 
     if (outcome.win) {
+      logShotResolution(this.state, this.shotEvents, newlyPocketed, {
+        foul: outcome.foul,
+        foulReason: outcome.foulReason,
+        continueShooting: false,
+        groupAssigned: outcome.groupAssigned,
+      });
       this.state.winnerTeam = outcome.win;
       this.state.phase = "GAME_OVER";
-      this.state.logs.push(makeLog(`🏆 Équipe ${outcome.win === "SOLIDS" ? "Pleines" : "Rayées"} remporte la partie !`, "victory"));
+      pushLog(this.state, `🏆 ${teamLabel(outcome.win)} remporte la partie !`, "victory");
       return;
     }
     if (outcome.loss) {
+      logShotResolution(this.state, this.shotEvents, newlyPocketed, {
+        foul: outcome.foul,
+        foulReason: outcome.foulReason,
+        continueShooting: false,
+        groupAssigned: outcome.groupAssigned,
+      });
       const other: TeamId = outcome.loss === "SOLIDS" ? "STRIPES" : "SOLIDS";
       this.state.winnerTeam = other;
       this.state.phase = "GAME_OVER";
-      this.state.logs.push(makeLog(`💀 Équipe ${outcome.loss === "SOLIDS" ? "Pleines" : "Rayées"} empoché la 8 prématurément. Victoire adverse.`, "failure"));
+      pushLog(
+        this.state,
+        `💀 ${teamLabel(outcome.loss)} a empoché la 8 prématurément. Victoire de ${teamLabel(other)}.`,
+        "failure",
+      );
       return;
-    }
-
-    if (outcome.groupAssigned) {
-      const g = this.state.teamGroups[team];
-      this.state.logs.push(makeLog(`Équipe ${team === "SOLIDS" ? "Pleines" : "Rayées"} : ${g === "SOLIDS" ? "Pleines (1-7)" : "Rayées (9-15)"}.`, "info"));
     }
 
     if (outcome.foul) {
       this.state.foulMessage = outcome.foulReason;
-      this.state.logs.push(makeLog(`Faute — ${outcome.foulReason}`, "foul"));
     } else {
       this.state.foulMessage = null;
     }
 
+    let nextShooterName: string | null = null;
+    let nextTeam: TeamId | null = null;
+
     if (outcome.continueShooting) {
-      // Same shooter keeps the table.
       this.state.phase = "SHOOTING";
       this.state.ballInHand = false;
     } else {
-      // Pass the turn to the other team, next shooter in their rotation.
-      const nextTeam: TeamId = team === "SOLIDS" ? "STRIPES" : "SOLIDS";
-      const nextMembers = this.state.players.filter((p) => p.team === nextTeam);
+      const other: TeamId = team === "SOLIDS" ? "STRIPES" : "SOLIDS";
+      const nextMembers = this.state.players.filter((p) => p.team === other);
       if (nextMembers.length === 0) {
-        // Practice mode: the other team is empty, keep the current shooter.
+        // Practice: no opponent — same shooter keeps the table.
         this.state.phase = outcome.foul ? "BALL_IN_HAND" : "SHOOTING";
         this.state.ballInHand = outcome.foul;
+        if (outcome.foul) {
+          nextShooterName = who;
+          nextTeam = team;
+        }
       } else {
-        this.teamShooterIndex[nextTeam] = (this.teamShooterIndex[nextTeam] + 1);
-        this.advanceShooter(nextTeam);
-        this.state.activeTeam = nextTeam;
+        this.teamShooterIndex[other] = (this.teamShooterIndex[other] + 1);
+        this.advanceShooter(other);
+        this.state.activeTeam = other;
         this.state.phase = outcome.foul ? "BALL_IN_HAND" : "SHOOTING";
         this.state.ballInHand = outcome.foul;
+        nextShooterName = shooterName(this.state);
+        nextTeam = other;
       }
     }
+
+    logShotResolution(this.state, this.shotEvents, newlyPocketed, {
+      foul: outcome.foul,
+      foulReason: outcome.foulReason,
+      continueShooting: outcome.continueShooting,
+      groupAssigned: outcome.groupAssigned,
+      nextShooterName: outcome.continueShooting ? null : nextShooterName,
+      nextTeam: outcome.continueShooting ? null : nextTeam,
+    });
   }
 
   private advanceShooter(team: TeamId): void {

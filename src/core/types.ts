@@ -15,6 +15,10 @@ export interface Ball {
   angle: number;       // accumulated roll angle (radians) for texture rotation
   pocketed: boolean;
   pocketIndex: number | null; // which pocket the ball fell into (-1 = none yet)
+  /** Cue English retained until first object-ball hit: -1 back … +1 top (follow). */
+  spinTop: number;
+  /** Cue English: -1 left … +1 right (from shooter's view). */
+  spinSide: number;
 }
 
 export type TeamId = 'SOLIDS' | 'STRIPES';
@@ -65,7 +69,10 @@ export interface ShotFrame {
 export interface ShotRequest {
   angle: number;   // radians, direction the cue ball is sent
   power: number;   // 0..1, normalized strike force
-  spin: number;    // -1..1, side/top spin (reserved, currently unused)
+  /** Side English: -1 = left, +1 = right (from shooter's view along aim). */
+  spinSide: number;
+  /** Top / backspin: -1 = back, +1 = top. */
+  spinTop: number;
 }
 
 export interface AimState {

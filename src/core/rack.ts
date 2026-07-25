@@ -15,6 +15,8 @@ function makeBall(id: number, pos: Vec2): Ball {
     angle: 0,
     pocketed: false,
     pocketIndex: null,
+    spinTop: 0,
+    spinSide: 0,
   };
 }
 
@@ -51,5 +53,7 @@ export function resetCueBall(balls: Ball[], pos?: Vec2): void {
   cue.pocketed = false;
   cue.pocketIndex = null;
   cue.vel = { x: 0, y: 0 };
+  cue.spinTop = 0;
+  cue.spinSide = 0;
   cue.pos = pos ?? { x: TABLE_WIDTH * 0.25, y: TABLE_HEIGHT / 2 };
 }

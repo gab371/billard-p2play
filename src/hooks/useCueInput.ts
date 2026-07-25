@@ -1,125 +1,176 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Vec2 } from "../core/types";
 
-const MAX_PULL_METERS = 0.45; // pull distance that maps to full power
+const MAX_PULL_METERS = 0.45;
 const MIN_POWER = 0.05;
 const CONTROL_KEY = "pool:control-mode";
-export type ControlMode = "standard" | "hover";
+const AIM_THROTTLE_MS = 50;
+
+/** standard / hover: drag-back power. barre: power via sidebar slider. */
+export type ControlMode = "standard" | "hover" | "barre";
 
 export function loadControlMode(): ControlMode {
   try {
     const v = localStorage.getItem(CONTROL_KEY);
-    if (v === "standard" || v === "hover") return v;
+    if (v === "standard" || v === "hover" || v === "barre") return v;
   } catch { /* ignore */ }
+  if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches) {
+    return "barre";
+  }
   return "standard";
 }
+
 export function saveControlMode(m: ControlMode): void {
   try { localStorage.setItem(CONTROL_KEY, m); } catch { /* ignore */ }
 }
 
 interface UseCueInputOptions {
-  enabled: boolean;             // is it this player's turn to shoot
-  ballInHand: boolean;          // cue ball may be placed anywhere
+  enabled: boolean;
+  /** When true, ignore aim/charge (e.g. English picker open). */
+  inputPaused?: boolean;
+  ballInHand: boolean;
   controlMode: ControlMode;
   getCueBallPos: () => Vec2 | null;
   toTable: (clientX: number, clientY: number) => Vec2 | null;
   onFire: (angle: number, power: number) => void;
   onPlaceCueBall: (pos: Vec2) => void;
   onConfirmPlacement: () => void;
+  onAimChange?: (angle: number, power: number) => void;
+}
+
+function isPoolCanvasEvent(e: Event): boolean {
+  const t = e.target;
+  if (!(t instanceof Element)) return false;
+  return t.id === "pool-canvas" || !!t.closest("#pool-canvas");
 }
 
 /**
- * Cue controls — two selectable schemes:
+ * Cue controls via Pointer Events.
  *
- *  - "standard" (default): RIGHT mouse button (hold + move) aims the cue.
- *    LEFT mouse button (press + drag back) charges the power; release fires.
- *  - "hover": the aim follows the mouse position (no button needed).
- *    LEFT button still charges + fires.
- *
- * Ball-in-hand: LEFT press + drag moves the cue ball; release confirms the
- * placement (so the next LEFT press shoots instead of re-placing).
+ * - standard: right-aim, left charge
+ * - hover: pointer-aim, left charge
+ * - barre: right-aim (like standard), power/fire via sidebar — left never charges
+ * Ball-in-hand: cue follows pointer (no button). Left confirms placement.
+ * Charge / confirm only when the event target is the pool canvas (sidebar UI safe).
  */
 export function useCueInput(opts: UseCueInputOptions) {
-  const { enabled, ballInHand, controlMode, getCueBallPos, toTable, onFire, onPlaceCueBall, onConfirmPlacement } = opts;
-  const [aimAngle, setAimAngle] = useState<number>(0);
-  const [power, setPower] = useState<number>(0);
-  const [charging, setCharging] = useState<boolean>(false);
-  const [placing, setPlacing] = useState<boolean>(false);
-  const lockedAngleRef = useRef<number>(0);
-  const chargingRef = useRef<boolean>(false);
-  const placingRef = useRef<boolean>(false);
-  const aimingRef = useRef<boolean>(false); // standard: right button held
-  const enabledRef = useRef<boolean>(enabled);
+  const {
+    enabled, inputPaused = false, ballInHand, controlMode, getCueBallPos, toTable,
+    onFire, onPlaceCueBall, onConfirmPlacement, onAimChange,
+  } = opts;
+  const [aimAngle, setAimAngle] = useState(0);
+  const [power, setPower] = useState(0);
+  const [charging, setCharging] = useState(false);
+  const lockedAngleRef = useRef(0);
+  const chargingRef = useRef(false);
+  const aimingRef = useRef(false);
+  const enabledRef = useRef(enabled);
+  const pausedRef = useRef(inputPaused);
+  const ballInHandRef = useRef(ballInHand);
+  const modeRef = useRef(controlMode);
+  const aimAngleRef = useRef(0);
+  const lastAimSent = useRef(0);
   enabledRef.current = enabled;
+  pausedRef.current = inputPaused;
+  ballInHandRef.current = ballInHand;
+  modeRef.current = controlMode;
+
+  const emitAim = useCallback((angle: number, pwr: number) => {
+    if (!onAimChange) return;
+    const now = performance.now();
+    if (now - lastAimSent.current < AIM_THROTTLE_MS) return;
+    lastAimSent.current = now;
+    onAimChange(angle, pwr);
+  }, [onAimChange]);
 
   const updateAim = useCallback((clientX: number, clientY: number) => {
     const cue = getCueBallPos();
     const m = toTable(clientX, clientY);
     if (!cue || !m) return;
-    setAimAngle(Math.atan2(m.y - cue.y, m.x - cue.x));
-  }, [getCueBallPos, toTable]);
+    const a = Math.atan2(m.y - cue.y, m.x - cue.x);
+    aimAngleRef.current = a;
+    setAimAngle(a);
+    emitAim(a, 0);
+  }, [getCueBallPos, toTable, emitAim]);
 
-  const onMouseMove = useCallback((e: MouseEvent) => {
-    if (!enabledRef.current) return;
-    if (placingRef.current) {
+  const startCharge = useCallback(() => {
+    lockedAngleRef.current = aimAngleRef.current;
+    chargingRef.current = true;
+    setCharging(true);
+    setPower(0);
+  }, []);
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!enabledRef.current || pausedRef.current) return;
+    const mode = modeRef.current;
+
+    if (ballInHandRef.current && !chargingRef.current && e.buttons === 0) {
+      const canvas = document.getElementById("pool-canvas");
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
       const m = toTable(e.clientX, e.clientY);
       if (m) onPlaceCueBall(m);
       return;
     }
-    if (chargingRef.current) {
+
+    if (chargingRef.current && mode !== "barre") {
       const cue = getCueBallPos();
       const m = toTable(e.clientX, e.clientY);
       if (!cue || !m) return;
       const dir = { x: Math.cos(lockedAngleRef.current), y: Math.sin(lockedAngleRef.current) };
       const rel = { x: m.x - cue.x, y: m.y - cue.y };
-      const pull = -(rel.x * dir.x + rel.y * dir.y); // positive when behind the ball
-      setPower(Math.max(0, Math.min(1, pull / MAX_PULL_METERS)));
+      const pull = -(rel.x * dir.x + rel.y * dir.y);
+      const p = Math.max(0, Math.min(1, pull / MAX_PULL_METERS));
+      setPower(p);
+      emitAim(lockedAngleRef.current, p);
       return;
     }
-    // Standard mode only aims while the right button is held; hover mode aims on move.
-    if (controlMode === "hover" || aimingRef.current) updateAim(e.clientX, e.clientY);
-  }, [controlMode, getCueBallPos, toTable, onPlaceCueBall, updateAim]);
 
-  const onMouseDown = useCallback((e: MouseEvent) => {
-    if (!enabledRef.current) return;
-    if (e.button === 2) {
-      // Right click: aim (standard mode, or also allowed in hover).
-      aimingRef.current = true;
+    // Aim: hover follows pointer; standard & barre aim while right button held.
+    if (mode === "hover" || aimingRef.current) {
+      if (ballInHandRef.current) return;
+      const canvas = document.getElementById("pool-canvas");
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
       updateAim(e.clientX, e.clientY);
+    }
+  }, [getCueBallPos, toTable, onPlaceCueBall, updateAim, emitAim]);
+
+  const onPointerDown = useCallback((e: PointerEvent) => {
+    if (!enabledRef.current || pausedRef.current) return;
+    // Never start aim/charge from sidebar / overlays / buttons.
+    if (!isPoolCanvasEvent(e)) return;
+    const mode = modeRef.current;
+
+    if (e.button === 2) {
+      if (!ballInHandRef.current) {
+        aimingRef.current = true;
+        updateAim(e.clientX, e.clientY);
+      }
       return;
     }
     if (e.button !== 0) return;
-    if (ballInHand) {
-      // Begin drag-to-place.
-      placingRef.current = true;
-      setPlacing(true);
-      const m = toTable(e.clientX, e.clientY);
-      if (m) onPlaceCueBall(m);
-      return;
-    }
-    // Left click: start charging, lock the current aim.
-    const cue = getCueBallPos();
-    const m = toTable(e.clientX, e.clientY);
-    if (!cue || !m) return;
-    lockedAngleRef.current = Math.atan2(m.y - cue.y, m.x - cue.x);
-    setAimAngle(lockedAngleRef.current);
-    chargingRef.current = true;
-    setCharging(true);
-    setPower(0);
-  }, [ballInHand, getCueBallPos, toTable, onPlaceCueBall, updateAim]);
 
-  const onMouseUp = useCallback((e: MouseEvent) => {
+    if (ballInHandRef.current) {
+      onConfirmPlacement();
+      ballInHandRef.current = false;
+      // Barre: placement only — shoot with the power slider.
+      if (mode === "barre") return;
+    }
+
+    if (mode === "barre") return; // power/fire via sidebar
+    startCharge();
+  }, [onConfirmPlacement, updateAim, startCharge]);
+
+  const onPointerUp = useCallback((e: PointerEvent) => {
     if (e.button === 2) {
       aimingRef.current = false;
       return;
     }
-    if (e.button !== 0) return;
-    if (placingRef.current) {
-      placingRef.current = false;
-      setPlacing(false);
-      onConfirmPlacement();
-      return;
-    }
+    if (e.button !== 0 && e.pointerType !== "touch") return;
+    if (modeRef.current === "barre") return;
     if (!chargingRef.current) return;
     chargingRef.current = false;
     setCharging(false);
@@ -127,35 +178,36 @@ export function useCueInput(opts: UseCueInputOptions) {
       if (p >= MIN_POWER) onFire(lockedAngleRef.current, p);
       return 0;
     });
-  }, [onFire, onConfirmPlacement]);
+  }, [onFire]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || inputPaused) {
       chargingRef.current = false; setCharging(false);
-      placingRef.current = false; setPlacing(false);
       aimingRef.current = false;
       setPower(0);
     }
-  }, [enabled]);
+  }, [enabled, inputPaused]);
 
   useEffect(() => {
     const canvas = document.getElementById("pool-canvas") as HTMLCanvasElement | null;
     if (!canvas) return;
-    const block = (e: Event) => e.preventDefault();
+    const block = (ev: Event) => ev.preventDefault();
     canvas.addEventListener("contextmenu", block);
     return () => canvas.removeEventListener("contextmenu", block);
   }, []);
 
   useEffect(() => {
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mousedown", onMouseDown);
-    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mousedown", onMouseDown);
-      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
     };
-  }, [onMouseMove, onMouseDown, onMouseUp]);
+  }, [onPointerMove, onPointerDown, onPointerUp]);
 
-  return { aimAngle, power, charging, placing };
+  return { aimAngle, power, charging, aimAngleRef };
 }

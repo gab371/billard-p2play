@@ -4,7 +4,7 @@
 // and cushion bounces.
 
 import type { Ball, Vec2 } from "./types";
-import { BALL_RADIUS, CUSHIONS } from "./constants";
+import { AIM_RAILS, BALL_RADIUS, POCKET_RADIUS, POCKETS } from "./constants";
 import { add, dist, dot, fromAngle, len, rayCircle, raySegment, scale, sub } from "./geometry";
 
 export interface AimSegment {
@@ -53,18 +53,21 @@ export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): Aim
       }
     }
 
-    // Nearest cushion hit.
+    // Nearest rail hit (closed rectangle — covers pocket mouths so the line
+    // stops at the green-border level instead of leaking through holes).
     let bestCushionT = Infinity;
     let bestCushionNormal: Vec2 | null = null;
-    for (const seg of CUSHIONS) {
+    let hitPocketMouth = false;
+    for (const seg of AIM_RAILS) {
       const t = raySegment(origin, dir, seg);
       if (t !== null && t < bestCushionT) {
         bestCushionT = t;
+        const hit = add(origin, scale(dir, t));
+        hitPocketMouth = POCKETS.some((p) => dist(hit, p) < POCKET_RADIUS * 1.25);
         const d = sub(seg.b, seg.a);
         let n = { x: -d.y, y: d.x };
         const nl = len(n);
         n = { x: n.x / nl, y: n.y / nl };
-        // Orient normal against the ray direction (toward the table).
         if (dot(n, dir) > 0) n = { x: -n.x, y: -n.y };
         bestCushionNormal = n;
       }
@@ -73,7 +76,6 @@ export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): Aim
     const hitBall = bestBall && bestBallT <= bestCushionT;
     const t = hitBall ? bestBallT : bestCushionT;
     if (!isFinite(t) || t > MAX_RAY) {
-      // No hit: draw the full capped line.
       segments.push({ from: origin, to: add(origin, scale(dir, MAX_RAY)), kind: "main" });
       break;
     }
@@ -85,14 +87,11 @@ export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): Aim
       ghostBall = endPoint;
       contactBallId = bestBall.id;
 
-      // Target ball direction: from ghost ball center to object ball center.
       const tDir = sub(bestBall.pos, endPoint);
       const tLen = len(tDir);
       if (tLen > 1e-6) {
         targetDir = scale(tDir, 1 / tLen);
-        // Cue ball deflection: component of dir perpendicular to target direction.
-        // The cue ball leaves along the tangent (perpendicular to the impact normal).
-        const normal = scale(tDir, 1 / tLen); // impact normal (cue -> object)
+        const normal = scale(tDir, 1 / tLen);
         const dotN = dot(dir, normal);
         cueDeflect = sub(dir, scale(normal, dotN));
         const dLen = len(cueDeflect);
@@ -114,13 +113,11 @@ export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): Aim
       }
       break;
     } else {
-      // Cushion bounce: draw main line to cushion, then reflect and continue.
+      // Rail hit: always draw to the edge. Don't bounce through a pocket mouth.
       segments.push({ from: origin, to: endPoint, kind: "main" });
-      if (!bestCushionNormal) break;
-      // Reflect direction about the cushion normal (normal points toward table).
+      if (hitPocketMouth || !bestCushionNormal) break;
       const d = dot(dir, bestCushionNormal);
       dir = sub(dir, scale(bestCushionNormal, 2 * d));
-      // Nudge origin off the cushion to avoid re-hitting the same segment.
       origin = add(endPoint, scale(bestCushionNormal, 0.001));
     }
   }

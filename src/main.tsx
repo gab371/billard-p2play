@@ -2,6 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
+import { installTestHooks } from './testHooks'
+
+installTestHooks();
 
 export function mount(element: HTMLElement, options: {
   peerId: string;

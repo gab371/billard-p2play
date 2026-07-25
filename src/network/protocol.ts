@@ -59,6 +59,13 @@ export function sanitizeGameState(state: GameState, _targetPlayerId: string): Ga
 }
 
 /** Helper to build a FIRE_SHOT payload. */
-export function shotPayload(shot: ShotRequest): { angle: number; power: number; spin: number } {
-  return { angle: shot.angle, power: shot.power, spin: shot.spin };
+export function shotPayload(shot: ShotRequest): {
+  angle: number; power: number; spinSide: number; spinTop: number;
+} {
+  return {
+    angle: shot.angle,
+    power: shot.power,
+    spinSide: shot.spinSide,
+    spinTop: shot.spinTop,
+  };
 }

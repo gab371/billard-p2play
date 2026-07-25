@@ -90,7 +90,7 @@ function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpect
   if (!canSelfAssign && !hostCanForceSpectator && !hostCanEditTeam && !(isHost && player.isHost)) {
     return (
       <span className="text-xs text-zinc-400">
-        {player.team === "SOLIDS" ? "🟠 Pleines" : player.team === "STRIPES" ? "🟡 Rayées" : `👁️ Spectateur${locked ? " 🔒" : ""}`}
+        {player.team === "SOLIDS" ? "Team 1" : player.team === "STRIPES" ? "Team 2" : `Spectateur${locked ? " 🔒" : ""}`}
       </span>
     );
   }
@@ -107,8 +107,8 @@ function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpect
 
   return (
     <div className="flex gap-1.5 items-center">
-      {showTeamBtns && btn("SOLIDS", "Pleines", !(locked && isSpectator))}
-      {showTeamBtns && btn("STRIPES", "Rayées", !(locked && isSpectator))}
+      {showTeamBtns && btn("SOLIDS", "Team 1", !(locked && isSpectator))}
+      {showTeamBtns && btn("STRIPES", "Team 2", !(locked && isSpectator))}
       {showSpectatorBtn && btn(null, "Spectateur", true)}
       {isHost && !player.isHost && (
         <button type="button" title={locked ? "Déverrouiller" : "Forcer & verrouiller en spectateur"} onClick={() => onLockSpectator?.(player.id, !locked)}
