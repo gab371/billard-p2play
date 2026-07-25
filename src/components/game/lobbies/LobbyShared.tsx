@@ -48,21 +48,21 @@ export function VariantPicker({
             <div key={fam.family}>
               <div className="text-[11px] text-zinc-500 font-bold uppercase mb-1.5">{fam.label}</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {fam.ids.map((id) => {
-                  const v = VARIANTS[id];
+                {fam.ids.map((optionId) => {
+                  const variantDef = VARIANTS[optionId];
                   return (
                     <button
-                      key={id}
+                      key={optionId}
                       type="button"
-                      onClick={() => onChange?.({ variantId: id, ...(id === "FR_CAROM" ? { caromMode: caromMode || "LIBRE" } : {}) })}
+                      onClick={() => onChange?.({ variantId: optionId, ...(optionId === "FR_CAROM" ? { caromMode: caromMode || "LIBRE" } : {}) })}
                       className={`text-left p-3 rounded-xl border-2 transition-all ${
-                        variantId === id
+                        variantId === optionId
                           ? "bg-amber-500/15 border-amber-500"
                           : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
                       }`}
                     >
-                      <div className="text-sm font-bold text-zinc-100">{v.shortName}</div>
-                      <div className="text-[11px] text-zinc-400 mt-0.5 leading-snug">{v.description}</div>
+                      <div className="text-sm font-bold text-zinc-100">{variantDef.shortName}</div>
+                      <div className="text-[11px] text-zinc-400 mt-0.5 leading-snug">{variantDef.description}</div>
                     </button>
                   );
                 })}

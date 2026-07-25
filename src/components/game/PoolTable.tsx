@@ -121,8 +121,11 @@ export function PoolTable({
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const v = viewRef.current;
-    return { x: (clientX - rect.left - v.ox) / v.scale, y: (clientY - rect.top - v.oy) / v.scale };
+    const view = viewRef.current;
+    return {
+      x: (clientX - rect.left - view.ox) / view.scale,
+      y: (clientY - rect.top - view.oy) / view.scale,
+    };
   }, []);
 
   const handlePlace = useCallback((pos: Vec2) => {
@@ -153,8 +156,8 @@ export function PoolTable({
 
   const handleFire = useCallback((angle: number, power: number) => {
     if (callNeeded && !callReady) return;
-    const e = englishRef.current;
-    onFire({ angle, power, spinSide: e.side, spinTop: e.top });
+    const english = englishRef.current;
+    onFire({ angle, power, spinSide: english.side, spinTop: english.top });
     setBarrePower(0);
   }, [onFire, callNeeded, callReady]);
 
@@ -192,8 +195,8 @@ export function PoolTable({
     onAimChange: onAim,
   });
 
-  const handleBarreRelease = useCallback((p: number) => {
-    handleFire(cue.aimAngleRef.current, p);
+  const handleBarreRelease = useCallback((power: number) => {
+    handleFire(cue.aimAngleRef.current, power);
   }, [handleFire, cue.aimAngleRef]);
 
   const drawRef = useRef<((balls: any[]) => void) | null>(null);
@@ -202,22 +205,22 @@ export function PoolTable({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const v = viewRef.current;
+    const view = viewRef.current;
     timeRef.current = performance.now();
-    drawTable(ctx, v, size.w, size.h, timeRef.current, RAIL, layout);
+    drawTable(ctx, view, size.w, size.h, timeRef.current, RAIL, layout);
 
     const drawn = localCuePosRef.current
-      ? balls.map((b: any) =>
-          b.id === 0 ? { ...b, pos: { ...localCuePosRef.current! }, pocketed: false } : b,
+      ? balls.map((ball: any) =>
+          ball.id === 0 ? { ...ball, pos: { ...localCuePosRef.current! }, pocketed: false } : ball,
         )
       : balls;
 
-    for (const b of drawn) {
-      drawBall(ctx, b, v, ballStyle);
-      if (state.pendingCall?.ballId === b.id && !b.pocketed) {
-        const c = tableToCanvas(b.pos, v);
+    for (const ball of drawn) {
+      drawBall(ctx, ball, view, ballStyle);
+      if (state.pendingCall?.ballId === ball.id && !ball.pocketed) {
+        const center = tableToCanvas(ball.pos, view);
         ctx.beginPath();
-        ctx.arc(c.x, c.y, BALL_RADIUS * v.scale + 4, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, BALL_RADIUS * view.scale + 4, 0, Math.PI * 2);
         ctx.strokeStyle = "rgba(251, 191, 36, 0.95)";
         ctx.lineWidth = 3;
         ctx.stroke();
@@ -225,37 +228,37 @@ export function PoolTable({
     }
 
     if (state.pendingCall?.pocketIndex != null && layout.pockets[state.pendingCall.pocketIndex]) {
-      const p = layout.pockets[state.pendingCall.pocketIndex];
-      const c = tableToCanvas(p, v);
+      const pocket = layout.pockets[state.pendingCall.pocketIndex];
+      const center = tableToCanvas(pocket, view);
       ctx.beginPath();
-      ctx.arc(c.x, c.y, POCKET_RADIUS * v.scale * 1.15, 0, Math.PI * 2);
+      ctx.arc(center.x, center.y, POCKET_RADIUS * view.scale * 1.15, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(251, 191, 36, 0.9)";
       ctx.lineWidth = 3;
       ctx.stroke();
     }
 
     const cueId = activeCueBallId(variant.id, state.activeTeam);
-    const cueBall = drawn.find((b: any) => b.id === cueId && !b.pocketed);
+    const cueBall = drawn.find((ball: any) => ball.id === cueId && !ball.pocketed);
     if (!cueBall) return;
 
     if (canShoot && placing) {
-      drawBallInHandHint(ctx, cueBall, v);
+      drawBallInHandHint(ctx, cueBall, view);
     } else if (canShoot && !callBlocksFire) {
-      drawAiming(ctx, cueBall, drawn, cue.aimAngle, v, false, layout);
+      drawAiming(ctx, cueBall, drawn, cue.aimAngle, view, false, layout);
       const stickPower = controlMode === "barre" ? barrePower : cue.power;
       const stickCharging = controlMode === "barre" ? barrePower > 0 : cue.charging;
-      drawCueStick(ctx, cueBall, cue.aimAngle, stickPower, stickCharging, v);
+      drawCueStick(ctx, cueBall, cue.aimAngle, stickPower, stickCharging, view);
     } else if (canShoot && callBlocksFire) {
-      drawAiming(ctx, cueBall, drawn, cue.aimAngle, v, false, layout);
-      drawCueStick(ctx, cueBall, cue.aimAngle, 0, false, v);
+      drawAiming(ctx, cueBall, drawn, cue.aimAngle, view, false, layout);
+      drawCueStick(ctx, cueBall, cue.aimAngle, 0, false, view);
     } else if (
       state.aim.shooterId &&
       state.phase !== "RESOLVING" &&
       state.phase !== "GAME_OVER" &&
       !state.ballInHand
     ) {
-      drawAiming(ctx, cueBall, drawn, state.aim.angle, v, true, layout);
-      drawCueStick(ctx, cueBall, state.aim.angle, state.aim.power, state.aim.power > 0, v, true);
+      drawAiming(ctx, cueBall, drawn, state.aim.angle, view, true, layout);
+      drawCueStick(ctx, cueBall, state.aim.angle, state.aim.power, state.aim.power > 0, view, true);
     }
   };
 
@@ -268,7 +271,11 @@ export function PoolTable({
     drawRef,
   });
 
-  const chooseMode = (m: ControlMode) => { setControlMode(m); saveControlMode(m); setBarrePower(0); };
+  const chooseMode = (mode: ControlMode) => {
+    setControlMode(mode);
+    saveControlMode(mode);
+    setBarrePower(0);
+  };
 
   return (
     <div className="w-full flex flex-col items-center gap-3">

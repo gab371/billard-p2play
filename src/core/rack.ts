@@ -101,12 +101,12 @@ export function caromHomePos(id: number, w: number, h: number): Vec2 {
 }
 
 function shuffleIds(ids: number[]): number[] {
-  const a = [...ids];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+  const shuffled = [...ids];
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
-  return a;
+  return shuffled;
 }
 
 /**
@@ -132,8 +132,8 @@ function usEightBallOrder(): number[] {
 
   const rest = shuffleIds([...solids, ...stripes]);
   const freeSlots = [0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13];
-  freeSlots.forEach((slot, i) => {
-    order[slot] = rest[i];
+  freeSlots.forEach((slot, restIndex) => {
+    order[slot] = rest[restIndex];
   });
   return order;
 }

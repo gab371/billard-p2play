@@ -172,7 +172,6 @@ export class PoolGameEngine {
     if (this.state.phase !== "BREAKING" && this.state.phase !== "SHOOTING" && this.state.phase !== "BALL_IN_HAND") {
       return [];
     }
-    const v = getVariant(this.state.config.variantId);
     if (!isReadyToShoot(this.state)) {
       pushLog(this.state, "Annoncez la bille (et la poche) avant de tirer.", "warning");
       return [];

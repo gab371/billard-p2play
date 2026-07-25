@@ -6,45 +6,62 @@ import type { TableLayout } from "../../core/tableLayout";
 import { BALL_RADIUS, POCKET_RADIUS } from "../../core/constants";
 import { dist } from "../../core/geometry";
 
+const BALL_HIT_RADIUS = BALL_RADIUS * 2.2;
+const POCKET_HIT_RADIUS = POCKET_RADIUS * 2.4;
+
 export function pickCallAt(
-  pos: Vec2,
+  tablePos: Vec2,
   balls: Ball[],
   layout: TableLayout,
   callShot: CallShotMode,
-  current: PendingCall | null,
+  currentCall: PendingCall | null,
 ): { ballId: number | null; pocketIndex: number | null } | null {
-  let best: { id: number; d: number } | null = null;
-  for (const b of balls.filter((x) => !x.pocketed && x.id !== 0)) {
-    const d = dist(pos, b.pos);
-    if (d <= BALL_RADIUS * 2.2 && (!best || d < best.d)) best = { id: b.id, d };
+  let nearestBall: { ballId: number; distance: number } | null = null;
+  for (const ball of balls) {
+    if (ball.pocketed || ball.id === 0) continue;
+    const distance = dist(tablePos, ball.pos);
+    if (distance > BALL_HIT_RADIUS) continue;
+    if (!nearestBall || distance < nearestBall.distance) {
+      nearestBall = { ballId: ball.id, distance };
+    }
   }
-  if (best) {
+  if (nearestBall) {
     return {
-      ballId: best.id,
-      pocketIndex: callShot === "BALL" ? null : current?.pocketIndex ?? null,
+      ballId: nearestBall.ballId,
+      pocketIndex: callShot === "BALL" ? null : currentCall?.pocketIndex ?? null,
     };
   }
+
   if (callShot === "BALL_AND_POCKET" && layout.hasPockets) {
-    let bestP: { i: number; d: number } | null = null;
-    layout.pockets.forEach((p, i) => {
-      const d = dist(pos, p);
-      if (d <= POCKET_RADIUS * 2.4 && (!bestP || d < bestP.d)) bestP = { i, d };
-    });
-    if (bestP) return { ballId: current?.ballId ?? null, pocketIndex: bestP.i };
+    let nearestPocketIndex = -1;
+    let nearestPocketDistance = Infinity;
+    for (let pocketIndex = 0; pocketIndex < layout.pockets.length; pocketIndex++) {
+      const distance = dist(tablePos, layout.pockets[pocketIndex]);
+      if (distance > POCKET_HIT_RADIUS || distance >= nearestPocketDistance) continue;
+      nearestPocketDistance = distance;
+      nearestPocketIndex = pocketIndex;
+    }
+    if (nearestPocketIndex >= 0) {
+      return {
+        ballId: currentCall?.ballId ?? null,
+        pocketIndex: nearestPocketIndex,
+      };
+    }
   }
+
   return null;
 }
 
 export function callHintText(
   callShot: CallShotMode,
-  pending: PendingCall | null,
+  pendingCall: PendingCall | null,
 ): string | null {
   if (callShot === "NONE") return null;
-  if (!pending?.ballId) return "Cliquez une bille pour l'annoncer.";
-  if (callShot === "BALL_AND_POCKET" && pending.pocketIndex == null) {
+  if (!pendingCall?.ballId) return "Cliquez une bille pour l'annoncer.";
+  if (callShot === "BALL_AND_POCKET" && pendingCall.pocketIndex == null) {
     return "Cliquez une poche pour l'annoncer.";
   }
-  const pocket =
-    pending.pocketIndex != null ? ` → poche ${pending.pocketIndex + 1}` : "";
-  return `Annonce : #${pending.ballId}${pocket}`;
+  const pocketLabel =
+    pendingCall.pocketIndex != null ? ` → poche ${pendingCall.pocketIndex + 1}` : "";
+  return `Annonce : #${pendingCall.ballId}${pocketLabel}`;
 }
