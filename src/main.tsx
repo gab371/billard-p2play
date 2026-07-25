@@ -9,6 +9,10 @@ export function mount(element: HTMLElement, options: {
   externalPeerManager?: any;
   playerName?: string;
   playerAvatar?: string;
+  isHost?: boolean;
+  lateJoin?: boolean;
+  gameConfig?: any;
+  hubPhase?: string;
 }) {
   const styleId = 'game-style-pool';
   if (!document.getElementById(styleId)) {
@@ -28,6 +32,10 @@ export function mount(element: HTMLElement, options: {
         onExit={options.onExit}
         playerName={options.playerName}
         playerAvatar={options.playerAvatar}
+        isHost={options.isHost}
+        lateJoin={options.lateJoin}
+        gameConfig={options.gameConfig}
+        hubPhase={options.hubPhase}
       />
     </StrictMode>
   );
@@ -38,7 +46,7 @@ export function mount(element: HTMLElement, options: {
 (window as any).mountPool = mount;
 
 const rootEl = document.getElementById('root');
-if (rootEl && rootEl.children.length === 0) {
+if (import.meta.env.MODE !== 'lib' && rootEl && rootEl.children.length === 0) {
   createRoot(rootEl).render(
     <StrictMode>
       <App />

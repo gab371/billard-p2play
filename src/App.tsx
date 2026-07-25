@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { PeerManagerLike } from "p2play-core";
 import { useGame } from "./hooks/useGame";
 import { Lobby } from "./components/game/Lobby";
 import { PoolTable } from "./components/game/PoolTable";
@@ -9,19 +10,23 @@ import { Circle, Send, FileText, X } from "lucide-react";
 
 interface AppProps {
   isEmbedded?: boolean;
-  externalPeerManager?: any;
+  externalPeerManager?: PeerManagerLike;
   playerName?: string;
   playerAvatar?: string;
+  isHost?: boolean;
+  lateJoin?: boolean;
+  gameConfig?: any;
+  hubPhase?: string;
   onExit?: () => void;
 }
 
-export default function App({ isEmbedded = false, externalPeerManager, playerName, playerAvatar, onExit }: AppProps) {
-  const game = useGame({ externalPeerManager, isEmbedded, playerName, playerAvatar });
+export default function App({ isEmbedded = false, externalPeerManager, playerName, playerAvatar, isHost, lateJoin, gameConfig, hubPhase, onExit }: AppProps) {
+  const game = useGame({ externalPeerManager, isEmbedded, playerName, playerAvatar, isHost, lateJoin, gameConfig, hubPhase });
   const [chatInput, setChatInput] = useState("");
   const [showRules, setShowRules] = useState(false);
 
   const {
-    myPeerId, hostPeerId, isHost, chatMessages, gameState, status, error,
+    myPeerId, hostPeerId, isHost: gameIsHost, chatMessages, gameState, status, error,
     amSpectator, isMyTurn, engineRef, lastFrame,
     hostRoom, joinRoom, toggleReady, startGame, assignTeam, placeCueBall, confirmPlacement, requestBallInHand, fireShot,
     sendChatMessage, disconnect,
@@ -55,8 +60,8 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
               <span className="text-xs text-zinc-400 font-mono bg-zinc-900 px-3 py-1.5 rounded-full border border-zinc-800">
                 Salon : <span className="text-amber-400 font-bold">{hostPeerId}</span>
               </span>
-              <button onClick={isEmbedded && onExit ? onExit : disconnect} className="text-xs px-2.5 py-1.5 bg-rose-950/20 hover:bg-rose-900/20 text-rose-400 border border-rose-900/30 rounded-xl transition-all font-bold">
-                Quitter
+              <button onClick={isEmbedded && onExit && gameIsHost ? onExit : disconnect} className="text-xs px-2.5 py-1.5 bg-rose-950/20 hover:bg-rose-900/20 text-rose-400 border border-rose-900/30 rounded-xl transition-all font-bold" title={isEmbedded ? (gameIsHost ? "Retour au Hub" : "Quitter le Hub (la partie continue)") : "Quitter"}>
+                {isEmbedded ? (gameIsHost ? "← Hub" : "Quitter") : "Quitter"}
               </button>
             </>
           )}
@@ -68,8 +73,9 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
           <Lobby
             myPeerId={myPeerId}
             hostPeerId={hostPeerId}
-            isHost={isHost}
+            isHost={gameIsHost}
             players={gameState?.players || []}
+            spectatorLocks={gameState?.spectatorLocks || {}}
             status={status}
             error={error}
             isEmbedded={isEmbedded}
@@ -78,6 +84,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
             toggleReady={toggleReady}
             startGame={startGame}
             assignTeam={assignTeam}
+            onLockSpectator={game.lockSpectator}
             disconnect={disconnect}
             onExit={onExit}
           />
@@ -88,7 +95,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
                 state={gameState!}
                 isMyTurn={isMyTurn}
                 amSpectator={amSpectator}
-                isHost={isHost}
+                isHost={gameIsHost}
                 engineRef={engineRef}
                 lastFrame={lastFrame}
                 onFire={fireShot}
@@ -101,7 +108,11 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
                   <div className="text-2xl font-black text-amber-400">
                     🏆 Équipe {gameState!.winnerTeam === "SOLIDS" ? "Pleines" : "Rayées"} gagne !
                   </div>
-                  <button onClick={isEmbedded && onExit ? onExit : disconnect} className="mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-900 font-bold rounded-xl">Revenir au salon</button>
+                  {gameIsHost ? (
+                    <button onClick={isEmbedded && onExit ? onExit : disconnect} className="mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-900 font-bold rounded-xl">Revenir au salon</button>
+                  ) : (
+                    <p className="mt-3 text-xs text-zinc-400">En attente de l'hôte pour relancer une partie…</p>
+                  )}
                 </div>
               )}
             </div>

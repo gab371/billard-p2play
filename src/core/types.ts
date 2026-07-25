@@ -91,4 +91,6 @@ export interface GameState {
   aim: AimState;
   /** Monotonic counter incremented each time a shot is fired (used as a replay id). */
   shotId: number;
+  /** Host-locked spectators: a locked player cannot be assigned to a team. */
+  spectatorLocks: { [peerId: string]: boolean };
 }

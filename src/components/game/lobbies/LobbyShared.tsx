@@ -8,6 +8,7 @@ export interface LobbyProps {
   hostPeerId: string | null;
   isHost: boolean;
   players: Player[];
+  spectatorLocks?: { [peerId: string]: boolean };
   status: string;
   error: string | null;
   isEmbedded?: boolean;
@@ -16,6 +17,7 @@ export interface LobbyProps {
   toggleReady: (ready: boolean) => void;
   startGame: () => void;
   assignTeam: (playerId: string, team: TeamId | null) => void;
+  onLockSpectator?: (peerId: string, locked: boolean) => void;
   disconnect: () => void;
   onExit?: () => void;
 }
@@ -71,22 +73,51 @@ export function CopyButton({ code }: { code: string | null }) {
   );
 }
 
-function TeamButtons({ player, isHost, assignTeam }: {
-  player: Player; isHost: boolean; assignTeam: (id: string, t: TeamId | null) => void;
+function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpectator }: {
+  player: Player; isHost: boolean; myPeerId: string | null;
+  assignTeam: (id: string, t: TeamId | null) => void;
+  locked: boolean; onLockSpectator?: (id: string, locked: boolean) => void;
 }) {
-  if (!isHost) {
+  const isMe = player.id === myPeerId;
+  const isSpectator = player.team === null;
+
+  // Host may only force spectator on others (never promote spectator → team).
+  // Guests may change themselves unless locked as spectator.
+  const canSelfAssign = isMe && !player.isHost && (isSpectator ? !locked : true);
+  const hostCanForceSpectator = isHost && !player.isHost;
+  const hostCanEditTeam = isHost && !player.isHost && !isSpectator; // already playing: host may rebalance teams
+
+  if (!canSelfAssign && !hostCanForceSpectator && !hostCanEditTeam && !(isHost && player.isHost)) {
     return (
       <span className="text-xs text-zinc-400">
-        {player.team === "SOLIDS" ? "🟠 Pleines" : player.team === "STRIPES" ? "🟡 Rayées" : "👁️ Spectateur"}
+        {player.team === "SOLIDS" ? "🟠 Pleines" : player.team === "STRIPES" ? "🟡 Rayées" : `👁️ Spectateur${locked ? " 🔒" : ""}`}
       </span>
     );
   }
-  const btn = (t: TeamId | null, label: string) => (
-    <button type="button" onClick={() => assignTeam(player.id, t)}
-      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+
+  // Host editing self: full team controls (host is always a player).
+  const showTeamBtns = (isHost && player.isHost) || canSelfAssign || hostCanEditTeam;
+  const showSpectatorBtn = canSelfAssign || hostCanForceSpectator || (isHost && player.isHost);
+
+  const btn = (t: TeamId | null, label: string, enabled: boolean) => (
+    <button type="button" disabled={!enabled} onClick={() => assignTeam(player.id, t)}
+      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
         player.team === t ? "bg-amber-600 border-amber-400 text-zinc-900" : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600"}`}>{label}</button>
   );
-  return <div className="flex gap-1.5">{btn("SOLIDS", "Pleines")}{btn("STRIPES", "Rayées")}{btn(null, "Spectateur")}</div>;
+
+  return (
+    <div className="flex gap-1.5 items-center">
+      {showTeamBtns && btn("SOLIDS", "Pleines", !(locked && isSpectator))}
+      {showTeamBtns && btn("STRIPES", "Rayées", !(locked && isSpectator))}
+      {showSpectatorBtn && btn(null, "Spectateur", true)}
+      {isHost && !player.isHost && (
+        <button type="button" title={locked ? "Déverrouiller" : "Forcer & verrouiller en spectateur"} onClick={() => onLockSpectator?.(player.id, !locked)}
+          className={`px-1.5 py-1 rounded-lg text-[11px] border transition-all ${locked ? "bg-rose-500/20 text-rose-300 border-rose-500/40" : "bg-zinc-900 text-zinc-500 border-zinc-800 hover:text-zinc-300"}`}>
+          {locked ? "🔒" : "🔓"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 // --- Shared connected (in-room) view ---------------------------------------
@@ -97,14 +128,16 @@ export interface RoomConnectedViewProps {
   players: Player[];
   myPeerId: string | null;
   isEmbedded?: boolean;
+  spectatorLocks?: { [peerId: string]: boolean };
   assignTeam: (id: string, t: TeamId | null) => void;
+  onLockSpectator?: (id: string, locked: boolean) => void;
   startGame: () => void;
   toggleReady: (ready: boolean) => void;
   disconnect: () => void;
   onExit?: () => void;
 }
 
-export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmbedded, assignTeam, startGame, toggleReady, disconnect, onExit }: RoomConnectedViewProps) {
+export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmbedded, spectatorLocks = {}, assignTeam, onLockSpectator, startGame, toggleReady, disconnect, onExit }: RoomConnectedViewProps) {
   const [localReady, setLocalReady] = useState(false);
   const solids = players.filter((p) => p.team === "SOLIDS").length;
   const stripes = players.filter((p) => p.team === "STRIPES").length;
@@ -146,7 +179,7 @@ export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmb
                   {!p.isHost && p.isReady && <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full">Prêt</span>}
                 </div>
               </div>
-              <TeamButtons player={p} isHost={isHost} assignTeam={assignTeam} />
+              <TeamButtons player={p} isHost={isHost} myPeerId={myPeerId} assignTeam={assignTeam} locked={!!spectatorLocks[p.id]} onLockSpectator={onLockSpectator} />
             </div>
           ))}
         </div>

@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "p2play-core": "github:gab371/p2play-core#v0.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.25.0",

@@ -41,6 +41,7 @@ export class PoolGameEngine {
       winnerTeam: null,
       aim: { shooterId: null, angle: 0, power: 0 },
       shotId: 0,
+      spectatorLocks: {},
     };
   }
 
@@ -62,10 +63,23 @@ export class PoolGameEngine {
     if (p) p.isReady = ready;
   }
 
-  /** Host assigns a player to a team (or null = spectator). */
+  /** Host assigns a player to a team (or null = spectator). Refuses to assign a
+   * team to a host-locked spectator. */
   assignTeam(playerId: string, team: TeamId | null): void {
     const p = this.state.players.find((pl) => pl.id === playerId);
-    if (p) p.team = team;
+    if (!p) return;
+    if (team !== null && this.isLocked(playerId)) return; // locked spectators stay spectators
+    p.team = team;
+  }
+
+  setSpectatorLock(peerId: string, locked: boolean): void {
+    // Lock only applies to spectators (cannot "lock in player mode").
+    if (locked) this.assignTeam(peerId, null);
+    this.state.spectatorLocks[peerId] = locked;
+  }
+
+  isLocked(peerId: string): boolean {
+    return !!this.state.spectatorLocks[peerId];
   }
 
   // --- Game lifecycle ------------------------------------------------------
