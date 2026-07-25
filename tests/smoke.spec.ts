@@ -55,6 +55,7 @@ test("engine smoke: break kitchen + foul on empty miss", async ({ page }) => {
   expect(result.before.phase).toBe("BREAKING");
   expect(result.before.ballInHand).toBe(true);
   expect(result.cueX).toBeLessThanOrEqual(0.56); // HEAD_STRING ≈ 0.56
-  expect(result.after.foulMessage).toMatch(/Aucune bille/i);
+  // Break with no pot and <4 cushions → invalid break (rulebook); empty miss mid-game → "Aucune bille".
+  expect(result.after.foulMessage).toMatch(/Casse invalide|Aucune bille/i);
   expect(result.after.ballInHand).toBe(true);
 });
