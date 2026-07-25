@@ -11,8 +11,6 @@ interface UsePoolAnimationOptions {
   drawRef: React.MutableRefObject<((balls: Ball[]) => void) | null>;
 }
 
-const SMOOTH = 0.35;
-
 /**
  * Host: live engine balls.
  * Client mid-shot: lerp toward streamed SHOT_FRAME.
