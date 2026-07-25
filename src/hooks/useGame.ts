@@ -175,6 +175,19 @@ export function useGame(options?: UseGameOptions) {
             engine.setSpectatorLock(targetId, locked);
           }
           break;
+        case "CHANGE_CONFIG":
+          if (playerId === myPeerId) engine.setConfig(payload.config ?? {});
+          break;
+        case "SET_CALL":
+          engine.setCall(
+            playerId,
+            payload.ballId ?? null,
+            payload.pocketIndex !== undefined ? payload.pocketIndex : null,
+          );
+          break;
+        case "SET_PUSH_OUT":
+          engine.setPushOut(playerId, !!payload.declared);
+          break;
         case "SET_AIM": engine.setAim(playerId, payload.angle, payload.power); break;
         case "PLACE_CUE_BALL": engine.placeCueBall(playerId, payload.pos); break;
         case "CONFIRM_PLACEMENT": engine.confirmPlacement(playerId); break;
@@ -260,6 +273,9 @@ export function useGame(options?: UseGameOptions) {
   const startGame = useCallback(() => sendAction("START_GAME", {}), [sendAction]);
   const assignTeam = useCallback((playerId: string, team: TeamId | null) => sendAction("ASSIGN_TEAM", { team, targetPlayerId: playerId }), [sendAction]);
   const lockSpectator = useCallback((peerId: string, locked: boolean) => sendAction("LOCK_SPECTATOR", { peerId, locked }), [sendAction]);
+  const changeConfig = useCallback((config: Partial<import("../core/types").GameConfig>) => sendAction("CHANGE_CONFIG", { config }), [sendAction]);
+  const setCall = useCallback((ballId: number | null, pocketIndex: number | null) => sendAction("SET_CALL", { ballId, pocketIndex }), [sendAction]);
+  const setPushOut = useCallback((declared: boolean) => sendAction("SET_PUSH_OUT", { declared }), [sendAction]);
   const setAim = useCallback((angle: number, power: number) => sendAction("SET_AIM", { angle, power }), [sendAction]);
   const placeCueBall = useCallback((pos: { x: number; y: number }) => sendAction("PLACE_CUE_BALL", { pos }), [sendAction]);
   const confirmPlacement = useCallback(() => sendAction("CONFIRM_PLACEMENT", {}), [sendAction]);
@@ -275,7 +291,7 @@ export function useGame(options?: UseGameOptions) {
     isHost, myPeerId, hostPeerId: p2p.hostPeerId, connectedPeers: p2p.connectedPeers,
     chatMessages, gameState, lastFrame: p2p.lastFrame, status, error,
     amSpectator, isMyTurn, engineRef: gameEngineRef,
-    hostRoom, joinRoom, toggleReady, startGame, assignTeam, lockSpectator, setAim, placeCueBall, confirmPlacement, requestBallInHand, fireShot,
+    hostRoom, joinRoom, toggleReady, startGame, assignTeam, lockSpectator, changeConfig, setCall, setPushOut, setAim, placeCueBall, confirmPlacement, requestBallInHand, fireShot,
     sendChatMessage, disconnect, localPlayerName, localPlayerAvatar,
   };
 }

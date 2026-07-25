@@ -15,14 +15,25 @@ function baseState(over: Partial<GameState> = {}): GameState {
     activeTeam: "SOLIDS",
     activeShooterId: "p1",
     teamGroups: { SOLIDS: "SOLIDS", STRIPES: "STRIPES" },
-    remaining: { SOLIDS: 7, STRIPES: 7, EIGHT: 1, CUE: 1 },
+    remaining: { SOLIDS: 7, STRIPES: 7, RED: 0, YELLOW: 0, EIGHT: 1, CUE: 1, OBJECT: 0 },
     ballInHand: false,
     foulMessage: null,
     logs: [],
     winnerTeam: null,
+    winnerPlayerId: null,
     aim: { shooterId: null, angle: 0, power: 0 },
     shotId: 2,
     spectatorLocks: {},
+    config: { variantId: "US_EIGHT" },
+    pendingCall: null,
+    scores: {},
+    teamScores: { SOLIDS: 0, STRIPES: 0 },
+    consecutiveFouls: { SOLIDS: 0, STRIPES: 0 },
+    freeShotsRemaining: 0,
+    freeBall: false,
+    ballInHandKitchen: false,
+    pushOutAvailable: false,
+    pushOutDeclared: false,
     ...over,
   };
 }
@@ -70,13 +81,12 @@ describe("evaluateShot", () => {
     expect(out.foulReason).toMatch(/Aucune bille/i);
   });
 
-  it("does not assign groups on the break even if a ball is potted", () => {
+  it("does not assign groups on the break (open table)", () => {
     const state = baseState({
       teamGroups: { SOLIDS: null, STRIPES: null },
       shotId: 1,
     });
     const events: PhysicsEvent[] = [{ type: "clack", intensity: 1, ballId: 1, otherId: 0 }];
-    // Mark ball 1 as pocketed in newlyPocketed list
     const out = evaluateShot(state, events, [1], true);
     expect(out.groupAssigned).toBe(false);
     expect(state.teamGroups.SOLIDS).toBeNull();
@@ -93,6 +103,26 @@ describe("evaluateShot", () => {
     expect(out.groupAssigned).toBe(true);
     expect(state.teamGroups.SOLIDS).toBe("SOLIDS");
     expect(state.teamGroups.STRIPES).toBe("STRIPES");
+  });
+
+  it("grants blackball free shots + kitchen on foul", () => {
+    const state = baseState({ config: { variantId: "EN_BLACKBALL" } });
+    const out = evaluateShot(state, [], [], false);
+    expect(out.foul).toBe(true);
+    expect(out.grantFreeShots).toBe(2);
+    expect(out.grantFreeBall).toBe(true);
+    expect(out.ballInHandKitchen).toBe(true);
+  });
+
+  it("rejects invalid break with neither pot nor 4 cushions", () => {
+    const state = baseState({ teamGroups: { SOLIDS: null, STRIPES: null } });
+    const events: PhysicsEvent[] = [
+      { type: "clack", intensity: 1, ballId: 1, otherId: 0 },
+      { type: "cushion", intensity: 0.2, ballId: 1 },
+    ];
+    const out = evaluateShot(state, events, [], true);
+    expect(out.foul).toBe(true);
+    expect(out.foulReason).toMatch(/Casse invalide/i);
   });
 
   it("firstContact finds the cue collision partner", () => {

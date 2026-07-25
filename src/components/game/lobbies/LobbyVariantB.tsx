@@ -5,7 +5,7 @@ import { AvatarGrid, NameInput, RoomConnectedView } from "./LobbyShared";
 /** Variant B — single screen styled like the other P2Play games (bouncing
  *  emote header, avatar grid, "Créer une Table" + "OU" + code + "Rejoindre"). */
 export function LobbyVariantB(props: LobbyProps) {
-  const { myPeerId, hostPeerId, isHost, players, spectatorLocks, status, error, isEmbedded, hostRoom, joinRoom, toggleReady, startGame, assignTeam, onLockSpectator, disconnect, onExit } = props;
+  const { myPeerId, hostPeerId, isHost, players, spectatorLocks, status, error, isEmbedded, variantId, caromMode, hostRoom, joinRoom, toggleReady, startGame, assignTeam, onLockSpectator, onChangeConfig, disconnect, onExit } = props;
 
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState("🎱");
@@ -15,7 +15,8 @@ export function LobbyVariantB(props: LobbyProps) {
   if (myPeerId) {
     return <div className="flex items-center justify-center min-h-[70vh] px-4">
       <RoomConnectedView hostPeerId={hostPeerId} isHost={isHost} players={players} myPeerId={myPeerId} isEmbedded={isEmbedded}
-        spectatorLocks={spectatorLocks} assignTeam={assignTeam} onLockSpectator={onLockSpectator} startGame={startGame} toggleReady={toggleReady} disconnect={disconnect} onExit={onExit} />
+        spectatorLocks={spectatorLocks} variantId={variantId} caromMode={caromMode} assignTeam={assignTeam} onLockSpectator={onLockSpectator}
+        onChangeConfig={onChangeConfig} startGame={startGame} toggleReady={toggleReady} disconnect={disconnect} onExit={onExit} />
     </div>;
   }
 

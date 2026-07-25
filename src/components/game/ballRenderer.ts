@@ -102,7 +102,12 @@ function drawStripe(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
   ctx.fill();
 }
 
-export function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, v: ViewTransform): void {
+export function drawBall(
+  ctx: CanvasRenderingContext2D,
+  ball: Ball,
+  v: ViewTransform,
+  style: "us" | "en" | "fr" | "object" = "us",
+): void {
   if (ball.pocketed) return;
   const c = tableToCanvas(ball.pos, v);
   const r = BALL_RADIUS * v.scale;
@@ -123,6 +128,36 @@ export function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, v: ViewTrans
     return;
   }
 
+  if (style === "fr") {
+    const color = ball.id === 0 ? "#f8f8f5" : ball.id === 1 ? "#eab308" : "#dc2626";
+    sphereBase(ctx, c.x, c.y, r, color);
+    if (ball.id === 0) {
+      const mx = c.x + Math.cos(ball.angle) * r * 0.4;
+      const my = c.y + Math.sin(ball.angle) * r * 0.4;
+      ctx.beginPath();
+      ctx.arc(mx, my, r * 0.16, 0, Math.PI * 2);
+      ctx.fillStyle = "#dc2626";
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(c.x - r * 0.32, c.y - r * 0.35, r * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.fill();
+    return;
+  }
+
+  if (style === "en") {
+    const color = ball.group === "EIGHT" ? "#0a0a0a" : ball.group === "RED" ? "#dc2626" : "#eab308";
+    sphereBase(ctx, c.x, c.y, r, color);
+    if (ball.group === "EIGHT") drawNumberCap(ctx, c.x, c.y, r, 8, ball.angle);
+    ctx.beginPath();
+    ctx.arc(c.x - r * 0.32, c.y - r * 0.35, r * 0.2, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.fill();
+    return;
+  }
+
+  // US numbered / object (9-10 ball)
   const color = COLORS[ball.id] ?? "#888";
   if (ball.id >= 9 && ball.id <= 15) drawStripe(ctx, c.x, c.y, r, color, ball.id, ball.angle);
   else drawSolid(ctx, c.x, c.y, r, color, ball.id, ball.angle);

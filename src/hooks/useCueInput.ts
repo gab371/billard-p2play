@@ -28,6 +28,8 @@ interface UseCueInputOptions {
   enabled: boolean;
   /** When true, ignore aim/charge (e.g. English picker open). */
   inputPaused?: boolean;
+  /** When true, allow place/aim but block charge & fire (call-shot incomplete). */
+  fireLocked?: boolean;
   ballInHand: boolean;
   controlMode: ControlMode;
   getCueBallPos: () => Vec2 | null;
@@ -55,7 +57,7 @@ function isPoolCanvasEvent(e: Event): boolean {
  */
 export function useCueInput(opts: UseCueInputOptions) {
   const {
-    enabled, inputPaused = false, ballInHand, controlMode, getCueBallPos, toTable,
+    enabled, inputPaused = false, fireLocked = false, ballInHand, controlMode, getCueBallPos, toTable,
     onFire, onPlaceCueBall, onConfirmPlacement, onAimChange,
   } = opts;
   const [aimAngle, setAimAngle] = useState(0);
@@ -66,12 +68,14 @@ export function useCueInput(opts: UseCueInputOptions) {
   const aimingRef = useRef(false);
   const enabledRef = useRef(enabled);
   const pausedRef = useRef(inputPaused);
+  const fireLockedRef = useRef(fireLocked);
   const ballInHandRef = useRef(ballInHand);
   const modeRef = useRef(controlMode);
   const aimAngleRef = useRef(0);
   const lastAimSent = useRef(0);
   enabledRef.current = enabled;
   pausedRef.current = inputPaused;
+  fireLockedRef.current = fireLocked;
   ballInHandRef.current = ballInHand;
   modeRef.current = controlMode;
 
@@ -156,11 +160,12 @@ export function useCueInput(opts: UseCueInputOptions) {
     if (ballInHandRef.current) {
       onConfirmPlacement();
       ballInHandRef.current = false;
-      // Barre: placement only — shoot with the power slider.
-      if (mode === "barre") return;
+      // Never charge on the same click that confirms placement.
+      return;
     }
 
     if (mode === "barre") return; // power/fire via sidebar
+    if (fireLockedRef.current) return; // wait for call-shot announcement
     startCharge();
   }, [onConfirmPlacement, updateAim, startCharge]);
 
@@ -181,12 +186,12 @@ export function useCueInput(opts: UseCueInputOptions) {
   }, [onFire]);
 
   useEffect(() => {
-    if (!enabled || inputPaused) {
+    if (!enabled || inputPaused || fireLocked) {
       chargingRef.current = false; setCharging(false);
-      aimingRef.current = false;
+      if (!enabled || inputPaused) aimingRef.current = false;
       setPower(0);
     }
-  }, [enabled, inputPaused]);
+  }, [enabled, inputPaused, fireLocked]);
 
   useEffect(() => {
     const canvas = document.getElementById("pool-canvas") as HTMLCanvasElement | null;

@@ -6,7 +6,8 @@ import { PoolTable } from "./components/game/PoolTable";
 import { Scoreboard } from "./components/game/Scoreboard";
 import { LogConsole } from "./components/game/LogConsole";
 import { SoundToggle } from "./components/ui/SoundToggle";
-import { Send, FileText, X } from "lucide-react";
+import { RulesModal } from "./components/game/RulesModal";
+import { Send } from "lucide-react";
 
 interface AppProps {
   isEmbedded?: boolean;
@@ -28,7 +29,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
   const {
     myPeerId, hostPeerId, isHost: gameIsHost, chatMessages, gameState, status, error,
     amSpectator, isMyTurn, engineRef, lastFrame,
-    hostRoom, joinRoom, toggleReady, startGame, assignTeam, placeCueBall, confirmPlacement, fireShot, setAim,
+    hostRoom, joinRoom, toggleReady, startGame, assignTeam, placeCueBall, confirmPlacement, fireShot, setAim, setCall, setPushOut,
     sendChatMessage, disconnect,
   } = game;
 
@@ -52,7 +53,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
         </div>
         <div className="flex items-center gap-3">
           <button type="button" onClick={() => setShowRules(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 rounded-full border border-zinc-800 font-bold transition-all" title="Règles">
-            <FileText className="w-3.5 h-3.5" /><span>Règles</span>
+            <span>Règles</span>
           </button>
           <SoundToggle className="bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 border-zinc-800" />
           {gameState && gameState.phase !== "LOBBY" && gameState.phase !== "CONFIG" && (
@@ -76,6 +77,8 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
             isHost={gameIsHost}
             players={gameState?.players || []}
             spectatorLocks={gameState?.spectatorLocks || {}}
+            variantId={gameState?.config?.variantId}
+            caromMode={gameState?.config?.caromMode}
             status={status}
             error={error}
             isEmbedded={isEmbedded}
@@ -85,6 +88,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
             startGame={startGame}
             assignTeam={assignTeam}
             onLockSpectator={game.lockSpectator}
+            onChangeConfig={game.changeConfig}
             disconnect={disconnect}
             onExit={onExit}
           />
@@ -121,17 +125,13 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
                 onPlaceCueBall={placeCueBall}
                 onConfirmPlacement={confirmPlacement}
                 onAim={setAim}
+                onSetCall={setCall}
+                onSetPushOut={setPushOut}
               />
               {gameState!.phase === "GAME_OVER" && (
                 <div className="p-5 rounded-2xl bg-zinc-900/70 border border-amber-500/40 text-center">
                   <div className="text-2xl font-black text-amber-400">
-                    Équipe {gameState!.winnerTeam === "SOLIDS" ? "Team 1" : "Team 2"}
-                    {gameState!.teamGroups[gameState!.winnerTeam!] === "SOLIDS"
-                      ? " (Pleines)"
-                      : gameState!.teamGroups[gameState!.winnerTeam!] === "STRIPES"
-                      ? " (Rayées)"
-                      : ""}{" "}
-                    gagne !
+                    {`Équipe ${gameState!.winnerTeam === "SOLIDS" ? "Team 1" : "Team 2"} gagne !`}
                   </div>
                   {gameIsHost ? (
                     <button type="button" onClick={isEmbedded && onExit ? onExit : disconnect} className="mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-900 font-bold rounded-xl">Revenir au salon</button>
@@ -171,24 +171,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
         </a>
       </footer>
 
-      {showRules && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/90 backdrop-blur-md">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 w-full max-w-2xl text-zinc-100 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <button type="button" onClick={() => setShowRules(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200"><X className="w-5 h-5" /></button>
-            <h2 className="text-2xl font-black text-amber-400 mb-4 border-b border-zinc-800 pb-2">Règles : P2Play Billards</h2>
-            <div className="space-y-3 text-sm text-zinc-300 leading-relaxed">
-              <p><strong className="text-amber-400">Équipes.</strong> Deux équipes s'affrontent : <b>Team 1</b> et <b>Team 2</b>. Après la cassure, chaque équipe reçoit les <b>Pleines</b> (1-7) ou les <b>Rayées</b> (9-15). Plusieurs joueurs par équipe, rotation des tireurs.</p>
-              <p><strong className="text-amber-400">But.</strong> Empocher toutes les billes de son groupe, puis la 8 noire pour gagner.</p>
-              <p><strong className="text-amber-400">Cassure.</strong> Placez la blanche derrière la ligne de tête (kitchen), puis cassez le triangle. Le groupe est déterminé à la première bille légalement empochée <b>après</b> la cassure.</p>
-              <p><strong className="text-amber-400">Tour.</strong> Empochez légalement une bille de votre groupe → votre équipe rejoue. Sinon, le tour passe.</p>
-              <p><strong className="text-amber-400">Fautes.</strong> Blanche empochée, aucune bille touchée, ou bille adverse touchée en premier → bille en main pour l'adversaire.</p>
-              <p><strong className="text-amber-400">Victoire/Défaite.</strong> Empocher la 8 après son groupe = victoire. Empocher la 8 trop tôt ou avec une faute = défaite.</p>
-              <p><strong className="text-amber-400">Contrôles.</strong> Mode Standard : clic droit pour viser, clic gauche pour charger/tirer. Mode Survol : le pointeur vise, clic gauche charge. Mode Barre : clic droit pour viser, réglez la force sur la barre (haut = fort), puis bouton Tirer. Effet : cliquez la petite bille blanche à gauche pour ouvrir le sélecteur (où frapper la blanche). Bille en main : déplacez le curseur pour placer (sans bouton).</p>
-              <p><strong className="text-amber-400">Spectateurs.</strong> Joueurs sans équipe : vue lecture-seule (visée partagée).</p>
-            </div>
-          </div>
-        </div>
-      )}
+      <RulesModal open={showRules} config={gameState?.config} onClose={() => setShowRules(false)} />
     </div>
   );
 }

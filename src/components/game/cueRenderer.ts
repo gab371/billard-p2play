@@ -3,6 +3,8 @@
 import type { Ball } from "../../core/types";
 import { BALL_RADIUS } from "../../core/constants";
 import { predictShot, type AimPrediction } from "../../core/aiming";
+import type { TableLayout } from "../../core/tableLayout";
+import { POOL_LAYOUT } from "../../core/tableLayout";
 import { tableToCanvas, type ViewTransform } from "./ballRenderer";
 
 export function drawAiming(
@@ -12,8 +14,9 @@ export function drawAiming(
   angle: number,
   v: ViewTransform,
   dimmed = false,
+  layout: TableLayout = POOL_LAYOUT,
 ) {
-  const pred: AimPrediction = predictShot(cueBall, balls, angle);
+  const pred: AimPrediction = predictShot(cueBall, balls, angle, layout);
   const aMul = dimmed ? 0.35 : 1;
   ctx.lineWidth = 2;
   pred.segments.forEach((s) => {

@@ -3,7 +3,8 @@
 // RAIL band around the felt; anything outside that (cue pad) stays empty so the
 // cue stick can draw into transparent margin without thickening the wood border.
 
-import { CUSHION, CUSHIONS, POCKET_RADIUS, POCKETS, TABLE_HEIGHT, TABLE_WIDTH } from "../../core/constants";
+import { CUSHION, POCKET_RADIUS } from "../../core/constants";
+import { POOL_LAYOUT, type TableLayout } from "../../core/tableLayout";
 import { tableToCanvas, type ViewTransform } from "./ballRenderer";
 
 /** Visual wood thickness around the felt (px). Keep small — cue pad is separate. */
@@ -47,21 +48,20 @@ export function drawTable(
   canvasH: number,
   timeMs = 0,
   railPx = TABLE_RAIL_PX,
+  layout: TableLayout = POOL_LAYOUT,
 ): void {
-  // Transparent margin outside the wood (for cue overflow).
   ctx.clearRect(0, 0, canvasW, canvasH);
 
   const fx = v.ox;
   const fy = v.oy;
-  const fw = TABLE_WIDTH * v.scale;
-  const fh = TABLE_HEIGHT * v.scale;
+  const fw = layout.width * v.scale;
+  const fh = layout.height * v.scale;
   const rail = railPx;
   const wx = fx - rail;
   const wy = fy - rail;
   const ww = fw + rail * 2;
   const wh = fh + rail * 2;
 
-  // Wood frame only (not the whole canvas)
   const wood = ctx.createLinearGradient(wx, wy, wx + ww, wy + wh);
   wood.addColorStop(0, "#5c3a1e");
   wood.addColorStop(0.45, "#3b2412");
@@ -70,13 +70,11 @@ export function drawTable(
   roundRect(ctx, wx, wy, ww, wh, 10);
   ctx.fill();
 
-  // Inner wood lip
   ctx.strokeStyle = "rgba(212,196,160,0.25)";
   ctx.lineWidth = 3;
   roundRect(ctx, wx + rail * 0.35, wy + rail * 0.35, ww - rail * 0.7, wh - rail * 0.7, 6);
   ctx.stroke();
 
-  // Felt
   ctx.fillStyle = "#0a3d2e";
   ctx.fillRect(fx, fy, fw, fh);
   const pat = ensureFeltPattern(ctx);
@@ -101,7 +99,7 @@ export function drawTable(
   ctx.strokeStyle = "#1a6b4f";
   ctx.lineWidth = CUSHION * v.scale;
   ctx.lineCap = "butt";
-  for (const seg of CUSHIONS) {
+  for (const seg of layout.cushions) {
     const a = tableToCanvas(seg.a, v);
     const b = tableToCanvas(seg.b, v);
     ctx.beginPath();
@@ -124,7 +122,7 @@ export function drawTable(
   drawDiamond(ctx, fx - rail * 0.45, midY, d);
   drawDiamond(ctx, fx + fw + rail * 0.45, midY, d);
 
-  const headX = fx + TABLE_WIDTH * 0.25 * v.scale;
+  const headX = fx + layout.headString * v.scale;
   ctx.strokeStyle = "rgba(212,196,160,0.18)";
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 6]);
@@ -134,7 +132,9 @@ export function drawTable(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  for (const p of POCKETS) {
+  if (!layout.hasPockets) return;
+
+  for (const p of layout.pockets) {
     const c = tableToCanvas(p, v);
     const r = POCKET_RADIUS * v.scale;
     ctx.beginPath();

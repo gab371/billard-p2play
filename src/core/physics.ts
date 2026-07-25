@@ -9,18 +9,15 @@ import type { Ball, Vec2 } from "./types";
 import {
   BALL_RADIUS,
   BALL_REST,
-  CUSHIONS,
   FOLLOW_DRAW_FACTOR,
-  POCKETS,
   POCKET_RADIUS,
   RAIL_REST,
   ROLL_FRICTION,
   SIDE_CUE_FACTOR,
   SIDE_OBJ_THROW,
   STOP_THRESHOLD,
-  TABLE_HEIGHT,
-  TABLE_WIDTH,
 } from "./constants";
+import { POOL_LAYOUT, type TableLayout } from "./tableLayout";
 import { add, dist, dot, len, normalize, reflect, scale, sub } from "./geometry";
 
 export interface PhysicsEvent {
@@ -31,7 +28,9 @@ export interface PhysicsEvent {
   pocketIndex?: number;
 }
 
-const TABLE_CENTER: Vec2 = { x: TABLE_WIDTH / 2, y: TABLE_HEIGHT / 2 };
+function tableCenter(layout: TableLayout): Vec2 {
+  return { x: layout.width / 2, y: layout.height / 2 };
+}
 
 function closestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   const ab = sub(b, a);
@@ -39,16 +38,17 @@ function closestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   return add(a, scale(ab, t));
 }
 
-function cushionNormal(seg: { a: Vec2; b: Vec2 }): Vec2 {
+function cushionNormal(seg: { a: Vec2; b: Vec2 }, layout: TableLayout): Vec2 {
   const d = sub(seg.b, seg.a);
   let n = normalize({ x: -d.y, y: d.x });
   const mid = { x: (seg.a.x + seg.b.x) / 2, y: (seg.a.y + seg.b.y) / 2 };
-  if (dot(sub(TABLE_CENTER, mid), n) < 0) n = scale(n, -1);
+  if (dot(sub(tableCenter(layout), mid), n) < 0) n = scale(n, -1);
   return n;
 }
 
-function nearPocket(pos: Vec2): boolean {
-  return POCKETS.some((p) => dist(pos, p) < POCKET_RADIUS * 1.35);
+function nearPocket(pos: Vec2, layout: TableLayout): boolean {
+  if (!layout.hasPockets) return false;
+  return layout.pockets.some((p) => dist(pos, p) < POCKET_RADIUS * 1.35);
 }
 
 function resolveBallBall(b1: Ball, b2: Ball, events: PhysicsEvent[]): void {
@@ -117,15 +117,15 @@ function applyCueEnglishAfterHit(b1: Ball, b2: Ball, n: Vec2, impactSpeed: numbe
   cue.spinSide = 0;
 }
 
-function resolveCushion(b: Ball, events: PhysicsEvent[]): void {
-  if (nearPocket(b.pos)) return; // let pocket capture win near mouths
-  for (const seg of CUSHIONS) {
+function resolveCushion(b: Ball, events: PhysicsEvent[], layout: TableLayout): void {
+  if (nearPocket(b.pos, layout)) return;
+  for (const seg of layout.cushions) {
     const closest = closestOnSegment(b.pos, seg.a, seg.b);
     const delta = sub(b.pos, closest);
     const d = len(delta);
     if (d >= BALL_RADIUS) continue;
 
-    const n = cushionNormal(seg);
+    const n = cushionNormal(seg, layout);
     if (dot(b.vel, n) >= 0) continue;
 
     b.pos = add(closest, scale(n, BALL_RADIUS));
@@ -137,9 +137,10 @@ function resolveCushion(b: Ball, events: PhysicsEvent[]): void {
   }
 }
 
-function resolvePockets(b: Ball, events: PhysicsEvent[]): boolean {
-  for (let i = 0; i < POCKETS.length; i++) {
-    if (dist(b.pos, POCKETS[i]) < POCKET_RADIUS) {
+function resolvePockets(b: Ball, events: PhysicsEvent[], layout: TableLayout): boolean {
+  if (!layout.hasPockets) return false;
+  for (let i = 0; i < layout.pockets.length; i++) {
+    if (dist(b.pos, layout.pockets[i]) < POCKET_RADIUS) {
       b.pocketed = true;
       b.pocketIndex = i;
       b.vel = { x: 0, y: 0 };
@@ -151,14 +152,14 @@ function resolvePockets(b: Ball, events: PhysicsEvent[]): boolean {
 }
 
 /** Keep balls from escaping through cushion gaps (unless near a pocket). */
-function containBall(b: Ball, events: PhysicsEvent[]): void {
-  if (nearPocket(b.pos)) return;
+function containBall(b: Ball, events: PhysicsEvent[], layout: TableLayout): void {
+  if (nearPocket(b.pos, layout)) return;
   const r = BALL_RADIUS;
   let hit = false;
   if (b.pos.x < r) { b.pos.x = r; if (b.vel.x < 0) { b.vel.x *= -RAIL_REST; hit = true; } }
-  if (b.pos.x > TABLE_WIDTH - r) { b.pos.x = TABLE_WIDTH - r; if (b.vel.x > 0) { b.vel.x *= -RAIL_REST; hit = true; } }
+  if (b.pos.x > layout.width - r) { b.pos.x = layout.width - r; if (b.vel.x > 0) { b.vel.x *= -RAIL_REST; hit = true; } }
   if (b.pos.y < r) { b.pos.y = r; if (b.vel.y < 0) { b.vel.y *= -RAIL_REST; hit = true; } }
-  if (b.pos.y > TABLE_HEIGHT - r) { b.pos.y = TABLE_HEIGHT - r; if (b.vel.y > 0) { b.vel.y *= -RAIL_REST; hit = true; } }
+  if (b.pos.y > layout.height - r) { b.pos.y = layout.height - r; if (b.vel.y > 0) { b.vel.y *= -RAIL_REST; hit = true; } }
   if (hit) {
     const speed = len(b.vel);
     if (speed > 0.05) events.push({ type: "cushion", intensity: Math.min(1, speed / 3), ballId: b.id });
@@ -193,7 +194,7 @@ function chooseSubsteps(balls: Ball[], dt: number): number {
 }
 
 /** Advance the simulation by `dt` seconds. Mutates balls, returns sound events. */
-export function step(balls: Ball[], dt: number): PhysicsEvent[] {
+export function step(balls: Ball[], dt: number, layout: TableLayout = POOL_LAYOUT): PhysicsEvent[] {
   const events: PhysicsEvent[] = [];
   const subSteps = chooseSubsteps(balls, dt);
   const h = dt / subSteps;
@@ -214,10 +215,9 @@ export function step(balls: Ball[], dt: number): PhysicsEvent[] {
 
     for (const b of balls) {
       if (b.pocketed) continue;
-      // Pockets first so corner mouths win over rail tips.
-      if (resolvePockets(b, events)) continue;
-      resolveCushion(b, events);
-      containBall(b, events);
+      if (resolvePockets(b, events, layout)) continue;
+      resolveCushion(b, events, layout);
+      containBall(b, events, layout);
     }
   }
 

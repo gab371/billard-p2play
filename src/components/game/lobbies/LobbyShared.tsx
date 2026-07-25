@@ -1,5 +1,7 @@
 import { useState } from "react";
-import type { Player, TeamId } from "../../../core/types";
+import type { GameConfig, Player, TeamId } from "../../../core/types";
+import type { VariantId, CaromMode } from "../../../core/variants";
+import { getVariant, VARIANT_FAMILIES, VARIANTS, CAROM_MODES } from "../../../core/variants";
 
 export const POOL_AVATARS = ["🎱", "🟠", "🟡", "🎯", "🤠", "👑", "🎩", "🎱"];
 
@@ -12,17 +14,97 @@ export interface LobbyProps {
   status: string;
   error: string | null;
   isEmbedded?: boolean;
+  variantId?: VariantId;
+  caromMode?: CaromMode;
   hostRoom: (name: string, avatar: string) => void;
   joinRoom: (name: string, avatar: string, roomId: string) => void;
   toggleReady: (ready: boolean) => void;
   startGame: () => void;
   assignTeam: (playerId: string, team: TeamId | null) => void;
   onLockSpectator?: (peerId: string, locked: boolean) => void;
+  onChangeConfig?: (config: Partial<GameConfig>) => void;
   disconnect: () => void;
   onExit?: () => void;
 }
 
-// --- Shared form pieces -----------------------------------------------------
+export function VariantPicker({
+  variantId,
+  caromMode = "LIBRE",
+  isHost,
+  onChange,
+}: {
+  variantId: VariantId;
+  caromMode?: CaromMode;
+  isHost: boolean;
+  onChange?: (config: Partial<GameConfig>) => void;
+}) {
+  const active = getVariant(variantId);
+  return (
+    <div className="bg-zinc-950/40 border border-zinc-800 rounded-2xl p-4 mb-6 space-y-3">
+      <div className="text-xs text-amber-500 font-bold uppercase tracking-widest">Variante</div>
+      {isHost ? (
+        <>
+          {VARIANT_FAMILIES.map((fam) => (
+            <div key={fam.family}>
+              <div className="text-[11px] text-zinc-500 font-bold uppercase mb-1.5">{fam.label}</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {fam.ids.map((id) => {
+                  const v = VARIANTS[id];
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => onChange?.({ variantId: id, ...(id === "FR_CAROM" ? { caromMode: caromMode || "LIBRE" } : {}) })}
+                      className={`text-left p-3 rounded-xl border-2 transition-all ${
+                        variantId === id
+                          ? "bg-amber-500/15 border-amber-500"
+                          : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                      }`}
+                    >
+                      <div className="text-sm font-bold text-zinc-100">{v.shortName}</div>
+                      <div className="text-[11px] text-zinc-400 mt-0.5 leading-snug">{v.description}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {variantId === "FR_CAROM" && (
+            <div>
+              <div className="text-[11px] text-zinc-500 font-bold uppercase mb-1.5">Mode carambole</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {CAROM_MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onChange?.({ caromMode: m.id })}
+                    className={`text-left p-2.5 rounded-xl border-2 transition-all ${
+                      caromMode === m.id
+                        ? "bg-amber-500/15 border-amber-500"
+                        : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-zinc-100">{m.label}</div>
+                    <div className="text-[10px] text-zinc-500 mt-0.5 leading-snug">{m.hint}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="text-zinc-200 font-semibold bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-sm">
+          Actif : {active.name}
+          {variantId === "FR_CAROM" && (
+            <span className="text-zinc-400 font-normal">
+              {" "}— {CAROM_MODES.find((m) => m.id === caromMode)?.label ?? "Partie libre"}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AvatarGrid({ value, onChange, disabled }: {
   value: string; onChange: (a: string) => void; disabled?: boolean;
@@ -81,11 +163,9 @@ function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpect
   const isMe = player.id === myPeerId;
   const isSpectator = player.team === null;
 
-  // Host may only force spectator on others (never promote spectator → team).
-  // Guests may change themselves unless locked as spectator.
   const canSelfAssign = isMe && !player.isHost && (isSpectator ? !locked : true);
   const hostCanForceSpectator = isHost && !player.isHost;
-  const hostCanEditTeam = isHost && !player.isHost && !isSpectator; // already playing: host may rebalance teams
+  const hostCanEditTeam = isHost && !player.isHost && !isSpectator;
 
   if (!canSelfAssign && !hostCanForceSpectator && !hostCanEditTeam && !(isHost && player.isHost)) {
     return (
@@ -95,7 +175,6 @@ function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpect
     );
   }
 
-  // Host editing self: full team controls (host is always a player).
   const showTeamBtns = (isHost && player.isHost) || canSelfAssign || hostCanEditTeam;
   const showSpectatorBtn = canSelfAssign || hostCanForceSpectator || (isHost && player.isHost);
 
@@ -120,8 +199,6 @@ function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpect
   );
 }
 
-// --- Shared connected (in-room) view ---------------------------------------
-
 export interface RoomConnectedViewProps {
   hostPeerId: string | null;
   isHost: boolean;
@@ -129,20 +206,27 @@ export interface RoomConnectedViewProps {
   myPeerId: string | null;
   isEmbedded?: boolean;
   spectatorLocks?: { [peerId: string]: boolean };
+  variantId?: VariantId;
+  caromMode?: CaromMode;
   assignTeam: (id: string, t: TeamId | null) => void;
   onLockSpectator?: (id: string, locked: boolean) => void;
+  onChangeConfig?: (config: Partial<GameConfig>) => void;
   startGame: () => void;
   toggleReady: (ready: boolean) => void;
   disconnect: () => void;
   onExit?: () => void;
 }
 
-export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmbedded, spectatorLocks = {}, assignTeam, onLockSpectator, startGame, toggleReady, disconnect, onExit }: RoomConnectedViewProps) {
+export function RoomConnectedView({
+  hostPeerId, isHost, players, myPeerId, isEmbedded, spectatorLocks = {},
+  variantId = "US_EIGHT", caromMode = "LIBRE", assignTeam, onLockSpectator, onChangeConfig,
+  startGame, toggleReady, disconnect, onExit,
+}: RoomConnectedViewProps) {
   const [localReady, setLocalReady] = useState(false);
   const solids = players.filter((p) => p.team === "SOLIDS").length;
   const stripes = players.filter((p) => p.team === "STRIPES").length;
   const canStart = solids > 0 || stripes > 0;
-  const practice = solids === 0 || stripes === 0;
+  const practice = (solids === 0 || stripes === 0) && canStart;
 
   const handleReady = () => {
     const next = !localReady;
@@ -155,7 +239,7 @@ export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmb
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-amber-400 to-yellow-500 bg-clip-text text-transparent">
-            🎱 Salon : {hostPeerId}
+            Salon : {hostPeerId}
           </h1>
           <CopyButton code={hostPeerId} />
         </div>
@@ -163,7 +247,9 @@ export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmb
           {isHost ? "HÔTE" : "INVITÉ"}
         </span>
       </div>
-      <p className="text-zinc-400 text-sm mb-6">Partagez ce code avec vos amis pour les inviter à jouer.</p>
+      <p className="text-zinc-400 text-sm mb-4">Partagez ce code avec vos amis pour les inviter à jouer.</p>
+
+      <VariantPicker variantId={variantId} caromMode={caromMode} isHost={isHost} onChange={onChangeConfig} />
 
       <div className="space-y-4 mb-6">
         <h2 className="text-lg font-bold text-zinc-200">Joueurs connectés ({players.length})</h2>
@@ -183,8 +269,8 @@ export function RoomConnectedView({ hostPeerId, isHost, players, myPeerId, isEmb
             </div>
           ))}
         </div>
-        {practice && canStart && (
-          <p className="text-xs text-amber-400/80">⚠️ Mode entraînement : une seule équipe est composée. Ajoutez un joueur à l'autre équipe pour une vraie partie.</p>
+        {practice && (
+          <p className="text-xs text-amber-400/80">Mode entraînement : une seule équipe est composée.</p>
         )}
       </div>
 

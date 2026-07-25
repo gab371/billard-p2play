@@ -1,12 +1,6 @@
 import type { GameState, GamePhase, Player, TeamId, BallGroup } from "../../core/types";
-
-/** Fixed seat labels — independent of solids/stripes assignment. */
-const TEAM_NAME: Record<TeamId, string> = { SOLIDS: "Team 1", STRIPES: "Team 2" };
-
-const GROUP_LABEL: Record<"SOLIDS" | "STRIPES", string> = {
-  SOLIDS: "Pleines",
-  STRIPES: "Rayées",
-};
+import { getVariant } from "../../core/variants";
+import { lowestObjectBall } from "../../core/rules";
 
 const PHASE_LABEL: Partial<Record<GamePhase, string>> = {
   BREAKING: "Cassure",
@@ -16,37 +10,18 @@ const PHASE_LABEL: Partial<Record<GamePhase, string>> = {
   GAME_OVER: "Fin de partie",
 };
 
-function BallPip({ n, group }: { n: number; group: "SOLIDS" | "STRIPES" }) {
-  return (
-    <span
-      title={`Bille ${n}`}
-      className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold border border-zinc-700 ${
-        group === "SOLIDS" ? "bg-amber-400 text-zinc-900" : "bg-white text-zinc-900"
-      }`}
-    >
-      {n}
-    </span>
-  );
-}
+const GROUP_LABEL: Partial<Record<BallGroup, string>> = {
+  SOLIDS: "Pleines",
+  STRIPES: "Rayées",
+  RED: "Rouges",
+  YELLOW: "Jaunes",
+};
 
-function GroupBadge({ group }: { group: "SOLIDS" | "STRIPES" }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
-        group === "SOLIDS"
-          ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
-          : "bg-zinc-100/10 border-zinc-500/40 text-zinc-200"
-      }`}
-      title={group === "SOLIDS" ? "Pleines 1-7" : "Rayées 9-15"}
-    >
-      <span
-        className={`inline-block w-2.5 h-2.5 rounded-full ${
-          group === "SOLIDS" ? "bg-amber-400" : "bg-white border border-zinc-500"
-        }`}
-      />
-      {GROUP_LABEL[group]}
-    </span>
-  );
+function teamTitle(team: TeamId, variantId: string): string {
+  const v = getVariant(variantId);
+  if (v.id === "EN_BLACKBALL") return team === "SOLIDS" ? "Team Rouge" : "Team Jaune";
+  if (v.id === "FR_CAROM") return team === "SOLIDS" ? "Team Blanc" : "Team Jaune";
+  return team === "SOLIDS" ? "Team 1" : "Team 2";
 }
 
 function TeamCard({
@@ -58,11 +33,18 @@ function TeamCard({
   myPeerId: string | null;
   compact?: boolean;
 }) {
+  const v = getVariant(state.config?.variantId);
   const group = state.teamGroups[team] as BallGroup | null;
-  const assigned = group === "SOLIDS" || group === "STRIPES";
+  const assigned = group === "SOLIDS" || group === "STRIPES" || group === "RED" || group === "YELLOW";
   const remaining = assigned ? state.remaining[group] : null;
   const isActive = state.activeTeam === team && state.phase !== "GAME_OVER";
-  const ballNums = group === "SOLIDS" ? [1, 2, 3, 4, 5, 6, 7] : group === "STRIPES" ? [9, 10, 11, 12, 13, 14, 15] : [];
+  const scoring = v.id === "FR_CAROM" || v.id === "US_STRAIGHT_14_1";
+  const teamScore = state.teamScores?.[team] ?? 0;
+  const next = lowestObjectBall(state);
+  const ballNums =
+    group === "SOLIDS" || group === "RED" ? [1, 2, 3, 4, 5, 6, 7]
+    : group === "STRIPES" || group === "YELLOW" ? [9, 10, 11, 12, 13, 14, 15]
+    : [];
 
   return (
     <div className={`rounded-2xl border transition-all ${compact ? "p-3" : "p-4"} ${
@@ -70,28 +52,41 @@ function TeamCard({
     }`}>
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <h3 className="text-sm font-bold text-zinc-200 flex items-center gap-1.5 min-w-0 flex-wrap">
-          <span className="truncate">{TEAM_NAME[team]}</span>
-          {assigned && <GroupBadge group={group} />}
+          <span className="truncate">{teamTitle(team, v.id)}</span>
+          {assigned && group && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-zinc-600 text-zinc-300">
+              {GROUP_LABEL[group]}
+            </span>
+          )}
           {isActive && <span className="text-[10px] text-amber-400 shrink-0">à jouer</span>}
         </h3>
-        {assigned && (
+        {scoring && (
+          <span className="text-sm font-mono text-amber-300 shrink-0">
+            {teamScore}<span className="text-zinc-500 text-xs">/{v.winTarget}</span>
+          </span>
+        )}
+        {assigned && remaining != null && !scoring && (
           <span className="text-xs text-zinc-400 font-mono shrink-0">
-            {group === "SOLIDS" ? "1-7" : "9-15"} · <b className="text-zinc-200">{remaining}</b>
+            reste <b className="text-zinc-200">{remaining}</b>
           </span>
         )}
       </div>
-      {assigned ? (
+      {(v.id === "US_NINE" || v.id === "US_TEN") && isActive && next != null && (
+        <div className="mb-1.5 text-[10px] text-zinc-400">Prochaine bille : <b className="text-zinc-200">#{next}</b></div>
+      )}
+      {assigned && (
         <div className="flex flex-wrap gap-1 mb-2">
           {ballNums.map((n) => {
             const pocketed = !state.balls.some((b) => b.id === n && !b.pocketed);
             return (
-              <span key={n} className={pocketed ? "opacity-25" : ""}>
-                <BallPip n={n} group={group} />
-              </span>
+              <span key={n} className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold border border-zinc-700 ${pocketed ? "opacity-25" : ""} ${
+                group === "RED" ? "bg-red-500 text-white" : group === "YELLOW" ? "bg-yellow-400 text-zinc-900" : group === "SOLIDS" ? "bg-amber-400 text-zinc-900" : "bg-white text-zinc-900"
+              }`}>{n}</span>
             );
           })}
         </div>
-      ) : (
+      )}
+      {!assigned && v.groups && (
         <div className="mb-2 text-[10px] text-zinc-600">Groupe à déterminer</div>
       )}
       <div className={`flex flex-wrap gap-x-3 gap-y-1 ${compact ? "" : "flex-col space-y-1"}`}>
@@ -102,7 +97,6 @@ function TeamCard({
             <div key={p.id} className={`flex items-center gap-1.5 text-xs ${p.id === myPeerId ? "text-amber-300" : "text-zinc-300"}`}>
               <span className="text-base leading-none">{p.avatar}</span>
               <span className="truncate max-w-[7rem]">{p.name}</span>
-              {p.isHost && <span className="text-[9px] text-zinc-500">hôte</span>}
               {isShooter && <span className="text-[9px] text-amber-400 font-bold">tire</span>}
             </div>
           );
@@ -114,14 +108,37 @@ function TeamCard({
 
 function PhaseCard({ state }: { state: GameState }) {
   const phaseLabel = PHASE_LABEL[state.phase] ?? state.phase;
+  const v = getVariant(state.config?.variantId);
+  const fouls = state.activeTeam ? state.consecutiveFouls?.[state.activeTeam] ?? 0 : 0;
+  const showFouls = (v.id === "US_NINE" || v.id === "US_TEN" || v.id === "US_STRAIGHT_14_1") && fouls > 0;
   return (
     <div className={`h-full px-3 py-3 rounded-2xl border text-xs font-bold tracking-wide flex flex-col items-center justify-center text-center min-w-[7.5rem] ${
       state.foulMessage
         ? "border-rose-500/40 bg-rose-950/30 text-rose-300"
         : "border-zinc-800 bg-zinc-900/50 text-zinc-300"
     }`}>
-      <span className="uppercase text-[10px] text-zinc-500 mb-1">Phase</span>
+      <span className="uppercase text-[10px] text-zinc-500 mb-1">{v.shortName}</span>
+      {v.id === "FR_CAROM" && (
+        <span className="text-[10px] font-normal text-zinc-400 mb-1">
+          {state.config.caromMode === "ONE_CUSHION" ? "1 bande"
+            : state.config.caromMode === "THREE_CUSHION" ? "3 bandes"
+            : "Partie libre"}
+        </span>
+      )}
       <span>{phaseLabel}</span>
+      {state.freeShotsRemaining > 0 && (
+        <span className="mt-1 font-normal text-[10px] text-sky-300">
+          Free ×{state.freeShotsRemaining}{state.freeBall ? " + FB" : ""}
+        </span>
+      )}
+      {showFouls && (
+        <span className="mt-1 font-normal text-[10px] text-amber-400/90">Fautes : {fouls}/3</span>
+      )}
+      {state.pushOutAvailable && (
+        <span className="mt-1 font-normal text-[10px] text-zinc-400">
+          {state.pushOutDeclared ? "Push-out déclaré" : "Push-out dispo"}
+        </span>
+      )}
       {state.foulMessage && (
         <span className="mt-1.5 font-normal text-[10px] leading-snug text-rose-300/90">{state.foulMessage}</span>
       )}
@@ -134,7 +151,7 @@ interface ScoreboardProps {
   myPeerId: string | null;
 }
 
-/** Top bar: Team 1 | phase | Team 2 (+ spectators strip if any). */
+/** Always Team 1 | phase | Team 2 — every variant is team-vs-team. */
 export function Scoreboard({ state, myPeerId }: ScoreboardProps) {
   const solids = state.players.filter((p) => p.team === "SOLIDS");
   const stripes = state.players.filter((p) => p.team === "STRIPES");

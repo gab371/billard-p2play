@@ -4,7 +4,9 @@
 // and cushion bounces.
 
 import type { Ball, Vec2 } from "./types";
-import { AIM_RAILS, BALL_RADIUS, POCKET_RADIUS, POCKETS } from "./constants";
+import { BALL_RADIUS, POCKET_RADIUS } from "./constants";
+import type { TableLayout } from "./tableLayout";
+import { POOL_LAYOUT } from "./tableLayout";
 import { add, dist, dot, fromAngle, len, rayCircle, raySegment, scale, sub } from "./geometry";
 
 export interface AimSegment {
@@ -30,10 +32,17 @@ const MAX_RAY = 5.0; // meters — generous cap so a clear table draws a long li
  * modeled as a ray starting at its center; ball hits use a ray-circle test with
  * radius = 2 * BALL_RADIUS (center-to-center contact distance).
  */
-export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): AimPrediction {
+export function predictShot(
+  cueBall: Ball,
+  balls: Ball[],
+  aimAngle: number,
+  layout: TableLayout = POOL_LAYOUT,
+): AimPrediction {
   const segments: AimSegment[] = [];
   let origin: Vec2 = { ...cueBall.pos };
   let dir: Vec2 = fromAngle(aimAngle, 1);
+  const rails = layout.aimRails;
+  const pockets = layout.hasPockets ? layout.pockets : [];
 
   let ghostBall: Vec2 | null = null;
   let contactBallId: number | null = null;
@@ -58,12 +67,12 @@ export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): Aim
     let bestCushionT = Infinity;
     let bestCushionNormal: Vec2 | null = null;
     let hitPocketMouth = false;
-    for (const seg of AIM_RAILS) {
+    for (const seg of rails) {
       const t = raySegment(origin, dir, seg);
       if (t !== null && t < bestCushionT) {
         bestCushionT = t;
         const hit = add(origin, scale(dir, t));
-        hitPocketMouth = POCKETS.some((p) => dist(hit, p) < POCKET_RADIUS * 1.25);
+        hitPocketMouth = pockets.some((p) => dist(hit, p) < POCKET_RADIUS * 1.25);
         const d = sub(seg.b, seg.a);
         let n = { x: -d.y, y: d.x };
         const nl = len(n);

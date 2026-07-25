@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameState, ShotRequest, ShotFrame, Vec2 } from "../../core/types";
-import { TABLE_HEIGHT, TABLE_WIDTH } from "../../core/constants";
-import { clampCuePlacement, placementModeForPhase } from "../../core/rules";
-import { drawBall, type ViewTransform } from "./ballRenderer";
+import { BALL_RADIUS, POCKET_RADIUS } from "../../core/constants";
+import { clampCuePlacement, placementModeForState } from "../../core/rules";
+import { getVariant, needsCallBeforeShot, isReadyToShoot, activeCueBallId } from "../../core/variants";
+import { getTableLayout } from "../../core/tableLayout";
+import { drawBall, tableToCanvas, type ViewTransform } from "./ballRenderer";
 import { drawTable, TABLE_RAIL_PX } from "./tableRenderer";
 import { drawAiming, drawBallInHandHint, drawCueStick, powerMeterClass } from "./cueRenderer";
 import { usePoolAnimation } from "../../hooks/usePoolAnimation";
 import { useCueInput, loadControlMode, saveControlMode, type ControlMode } from "../../hooks/useCueInput";
 import { ShotSidebar, EnglishPickerModal, type EnglishOffset } from "./ShotSidebar";
+import { pickCallAt } from "./callShotPick";
+import { TableShotHints } from "./TableShotHints";
 
 interface PoolTableProps {
   state: GameState;
@@ -20,18 +24,18 @@ interface PoolTableProps {
   onPlaceCueBall: (pos: Vec2) => void;
   onConfirmPlacement: () => void;
   onAim?: (angle: number, power: number) => void;
+  onSetCall?: (ballId: number | null, pocketIndex: number | null) => void;
+  onSetPushOut?: (declared: boolean) => void;
 }
 
-/** Thin wood border around the felt (unchanged look). */
 const RAIL = TABLE_RAIL_PX;
-/** Empty transparent pad outside the wood so the cue can overflow visibly. */
 const CUE_PAD = 40;
 const INSET = RAIL + CUE_PAD;
 const PLACE_THROTTLE_MS = 40;
 
 export function PoolTable({
   state, isMyTurn, amSpectator, isHost, engineRef, lastFrame,
-  onFire, onPlaceCueBall, onConfirmPlacement, onAim,
+  onFire, onPlaceCueBall, onConfirmPlacement, onAim, onSetCall, onSetPushOut,
 }: PoolTableProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, ox: 0, oy: 0 });
@@ -43,10 +47,15 @@ export function PoolTable({
   const englishRef = useRef(english);
   englishRef.current = english;
   const timeRef = useRef(0);
-  /** Optimistic cue position while placing — avoids network/state lag desync. */
   const localCuePosRef = useRef<Vec2 | null>(null);
   const [, bumpPreview] = useState(0);
   const lastPlaceSent = useRef(0);
+
+  const variant = useMemo(() => getVariant(state.config?.variantId), [state.config?.variantId]);
+  const layout = useMemo(() => getTableLayout(variant.tableProfile), [variant.tableProfile]);
+  const ballStyle = variant.id === "EN_BLACKBALL" ? "en" : variant.id === "FR_CAROM" ? "fr" : "us";
+  const callNeeded = needsCallBeforeShot(state);
+  const callReady = isReadyToShoot(state);
 
   const placing = isMyTurn && state.ballInHand;
 
@@ -65,22 +74,18 @@ export function PoolTable({
     if (!parent) return;
     const ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect;
-      // Felt + wood sized as before (only RAIL inset). Cue pad is extra outside.
       const layoutW = Math.max(320, r.width);
       const feltW = Math.max(1, layoutW - RAIL * 2);
-      const scale = feltW / TABLE_WIDTH;
-      const feltH = TABLE_HEIGHT * scale;
-      setSize({
-        w: feltW + INSET * 2,
-        h: feltH + INSET * 2,
-      });
+      const scale = feltW / layout.width;
+      const feltH = layout.height * scale;
+      setSize({ w: feltW + INSET * 2, h: feltH + INSET * 2 });
     });
     ro.observe(parent);
     return () => ro.disconnect();
-  }, []);
+  }, [layout.width, layout.height]);
 
   useEffect(() => {
-    const scale = (size.w - INSET * 2) / TABLE_WIDTH;
+    const scale = (size.w - INSET * 2) / layout.width;
     viewRef.current = { scale, ox: INSET, oy: INSET };
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -91,7 +96,7 @@ export function PoolTable({
     canvas.style.height = `${size.h}px`;
     const ctx = canvas.getContext("2d");
     if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }, [size]);
+  }, [size, layout.width]);
 
   const resolveBalls = useCallback(() => {
     const base = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
@@ -107,9 +112,10 @@ export function PoolTable({
   const getCueBallPos = useCallback((): Vec2 | null => {
     if (localCuePosRef.current) return localCuePosRef.current;
     const balls = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
-    const cue = balls.find((b: any) => b.id === 0 && !b.pocketed);
+    const cueId = activeCueBallId(variant.id, state.activeTeam);
+    const cue = balls.find((b: any) => b.id === cueId && !b.pocketed);
     return cue ? cue.pos : null;
-  }, [isHost, engineRef, state.balls]);
+  }, [isHost, engineRef, state.balls, state.activeTeam, variant.id]);
 
   const toTable = useCallback((clientX: number, clientY: number): Vec2 | null => {
     const canvas = canvasRef.current;
@@ -121,9 +127,9 @@ export function PoolTable({
 
   const handlePlace = useCallback((pos: Vec2) => {
     const balls = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
-    const mode = placementModeForPhase(state.phase);
-    const next = clampCuePlacement(pos, mode, balls);
-    if (!next) return; // stuck against a ball / invalid — keep last legal preview
+    const mode = placementModeForState(state);
+    const next = clampCuePlacement(pos, mode, balls, variant.tableProfile);
+    if (!next) return;
     localCuePosRef.current = next;
     bumpPreview((n) => n + 1);
     const now = performance.now();
@@ -131,33 +137,51 @@ export function PoolTable({
       lastPlaceSent.current = now;
       onPlaceCueBall(next);
     }
-  }, [isHost, engineRef, state.balls, state.phase, onPlaceCueBall]);
+  }, [isHost, engineRef, state.balls, state.phase, onPlaceCueBall, variant.tableProfile]);
 
   const handleConfirm = useCallback(() => {
     const balls = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
-    const mode = placementModeForPhase(state.phase);
+    const mode = placementModeForState(state);
     const raw = localCuePosRef.current;
-    const pos = raw ? clampCuePlacement(raw, mode, balls) : null;
+    const pos = raw ? clampCuePlacement(raw, mode, balls, variant.tableProfile) : null;
     if (pos) {
       localCuePosRef.current = pos;
       onPlaceCueBall(pos);
     }
     onConfirmPlacement();
-  }, [isHost, engineRef, state.balls, state.phase, onPlaceCueBall, onConfirmPlacement]);
+  }, [isHost, engineRef, state.balls, state.phase, onPlaceCueBall, onConfirmPlacement, variant.tableProfile]);
 
   const handleFire = useCallback((angle: number, power: number) => {
+    if (callNeeded && !callReady) return;
     const e = englishRef.current;
     onFire({ angle, power, spinSide: e.side, spinTop: e.top });
     setBarrePower(0);
-  }, [onFire]);
+  }, [onFire, callNeeded, callReady]);
+
+  const handleCallPick = useCallback((clientX: number, clientY: number) => {
+    if (!callNeeded || !isMyTurn || !onSetCall || amSpectator) return false;
+    const pos = toTable(clientX, clientY);
+    if (!pos) return false;
+    const next = pickCallAt(pos, state.balls, layout, variant.callShot, state.pendingCall);
+    if (!next) return false;
+    onSetCall(next.ballId, next.pocketIndex);
+    return true;
+  }, [callNeeded, isMyTurn, amSpectator, onSetCall, toTable, state.balls, state.pendingCall, variant.callShot, layout]);
+
+  const handleCallPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    handleCallPick(e.clientX, e.clientY);
+  }, [handleCallPick]);
 
   const canShoot = isMyTurn && !amSpectator && state.phase !== "RESOLVING" && state.phase !== "GAME_OVER";
   const ballsInMotion = state.phase === "RESOLVING";
-  const sidebarEnabled = canShoot && !placing;
+  const callBlocksFire = callNeeded && !callReady;
+  const sidebarEnabled = canShoot && !placing && !callBlocksFire;
 
   const cue = useCueInput({
     enabled: canShoot,
     inputPaused: englishOpen,
+    fireLocked: callBlocksFire,
     ballInHand: placing,
     controlMode,
     getCueBallPos,
@@ -180,33 +204,57 @@ export function PoolTable({
     if (!ctx) return;
     const v = viewRef.current;
     timeRef.current = performance.now();
-    drawTable(ctx, v, size.w, size.h, timeRef.current);
+    drawTable(ctx, v, size.w, size.h, timeRef.current, RAIL, layout);
 
-    // Ensure optimistic cue pos is drawn even if animation snapshot is one frame behind.
     const drawn = localCuePosRef.current
       ? balls.map((b: any) =>
           b.id === 0 ? { ...b, pos: { ...localCuePosRef.current! }, pocketed: false } : b,
         )
       : balls;
 
-    for (const b of drawn) drawBall(ctx, b, v);
+    for (const b of drawn) {
+      drawBall(ctx, b, v, ballStyle);
+      if (state.pendingCall?.ballId === b.id && !b.pocketed) {
+        const c = tableToCanvas(b.pos, v);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, BALL_RADIUS * v.scale + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(251, 191, 36, 0.95)";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+    }
 
-    const cueBall = drawn.find((b: any) => b.id === 0 && !b.pocketed);
+    if (state.pendingCall?.pocketIndex != null && layout.pockets[state.pendingCall.pocketIndex]) {
+      const p = layout.pockets[state.pendingCall.pocketIndex];
+      const c = tableToCanvas(p, v);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, POCKET_RADIUS * v.scale * 1.15, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(251, 191, 36, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    const cueId = activeCueBallId(variant.id, state.activeTeam);
+    const cueBall = drawn.find((b: any) => b.id === cueId && !b.pocketed);
     if (!cueBall) return;
 
-    if (canShoot) {
-      if (!placing) drawAiming(ctx, cueBall, drawn, cue.aimAngle, v);
+    if (canShoot && placing) {
+      drawBallInHandHint(ctx, cueBall, v);
+    } else if (canShoot && !callBlocksFire) {
+      drawAiming(ctx, cueBall, drawn, cue.aimAngle, v, false, layout);
       const stickPower = controlMode === "barre" ? barrePower : cue.power;
       const stickCharging = controlMode === "barre" ? barrePower > 0 : cue.charging;
       drawCueStick(ctx, cueBall, cue.aimAngle, stickPower, stickCharging, v);
-      if (placing) drawBallInHandHint(ctx, cueBall, v);
+    } else if (canShoot && callBlocksFire) {
+      drawAiming(ctx, cueBall, drawn, cue.aimAngle, v, false, layout);
+      drawCueStick(ctx, cueBall, cue.aimAngle, 0, false, v);
     } else if (
       state.aim.shooterId &&
       state.phase !== "RESOLVING" &&
       state.phase !== "GAME_OVER" &&
       !state.ballInHand
     ) {
-      drawAiming(ctx, cueBall, drawn, state.aim.angle, v, true);
+      drawAiming(ctx, cueBall, drawn, state.aim.angle, v, true, layout);
       drawCueStick(ctx, cueBall, state.aim.angle, state.aim.power, state.aim.power > 0, v, true);
     }
   };
@@ -224,6 +272,7 @@ export function PoolTable({
 
   return (
     <div className="w-full flex flex-col items-center gap-3">
+      <TableShotHints state={state} isMyTurn={isMyTurn} onSetPushOut={onSetPushOut} />
       <div className="w-full flex gap-2 items-stretch justify-center relative">
         <ShotSidebar
           enabled={sidebarEnabled}
@@ -239,6 +288,8 @@ export function PoolTable({
             id="pool-canvas"
             ref={canvasRef}
             className="pool-canvas relative z-0"
+            onPointerDown={handleCallPointerDown}
+            onClick={(e) => handleCallPick(e.clientX, e.clientY)}
             style={{
               borderRadius: 10,
               background: "transparent",
@@ -269,35 +320,20 @@ export function PoolTable({
         </div>
       </div>
       <div className="mt-1 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-400">
-        {amSpectator ? (
-          <span>Mode spectateur — lecture seule.</span>
-        ) : isMyTurn ? (
+        {amSpectator && <span>Mode spectateur — lecture seule.</span>}
+        {!amSpectator && !isMyTurn && <span>En attente de votre tour…</span>}
+        {!amSpectator && isMyTurn && (
           <>
-            <span>
-              {placing
-                ? "Bille en main : bougez la souris pour placer (sans clic) · Clic gauche : valider."
-                : controlMode === "standard"
-                ? "Clic droit : viser · Clic gauche : charger · Relâcher : tirer. Effet : petite bille à gauche."
-                : controlMode === "barre"
-                ? "Clic droit : viser · Effet (bille) + force à gauche · Tirer pour valider."
-                : "Survol : viser · Clic gauche : charger · Relâcher : tirer. Effet : bille à gauche."}
-            </span>
-            <div className="flex items-center gap-1 ml-1 flex-wrap justify-center">
-              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Contrôle</span>
-              {([
-                ["standard", "Standard"],
-                ["hover", "Survol"],
-                ["barre", "Barre"],
-              ] as const).map(([id, label]) => (
+            <span>{placing ? "Bille en main : placez puis validez." : "Visez et tirez."}</span>
+            <div className="flex items-center gap-1 flex-wrap justify-center">
+              {([["standard", "Standard"], ["hover", "Survol"], ["barre", "Barre"]] as const).map(([id, label]) => (
                 <button key={id} type="button" onClick={() => chooseMode(id)}
-                  className={`px-2 py-1 rounded-lg font-bold border transition-all ${
-                    controlMode === id ? "bg-amber-600 border-amber-400 text-zinc-900" : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600"
+                  className={`px-2 py-1 rounded-lg font-bold border ${
+                    controlMode === id ? "bg-amber-600 border-amber-400 text-zinc-900" : "bg-zinc-900 border-zinc-800 text-zinc-300"
                   }`}>{label}</button>
               ))}
             </div>
           </>
-        ) : (
-          <span>En attente de votre tour…</span>
         )}
       </div>
     </div>

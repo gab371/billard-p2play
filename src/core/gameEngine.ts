@@ -1,44 +1,81 @@
-// PoolGameEngine — authoritative state machine for 8-ball pool with teams.
-// Holds the GameState, builds the rack, fires shots, and resolves outcomes.
-// Physics is delegated to `physics.ts`, rule decisions to `rules.ts`.
+// PoolGameEngine — authoritative state machine for all billiard variants.
+// Physics → physics.ts; rule decisions → rules/*.
 
-import type {
-  GameState, ShotRequest, TeamId,
-} from "./types";
+import type { GameConfig, GameState, ShotRequest, TeamId } from "./types";
 import { MAX_SHOT_SPEED, MIN_SHOT_SPEED, SIDE_SPIN_SPEED } from "./constants";
-import { buildRack, resetCueBall } from "./rack";
+import { buildRack, resetCueBall, respotBall } from "./rack";
 import { isMoving, step, type PhysicsEvent } from "./physics";
-import { evaluateShot, recomputeRemaining, clampCuePlacement, placementModeForPhase } from "./rules";
+import {
+  evaluateShot,
+  recomputeRemaining,
+  clampCuePlacement,
+  placementModeForState,
+} from "./rules";
 import { logShotResolution, pushLog, shooterName, teamLabel } from "./journal";
+import {
+  DEFAULT_VARIANT_ID,
+  getVariant,
+  isReadyToShoot,
+  activeCueBallId,
+  type VariantId,
+} from "./variants";
+import { getTableLayout } from "./tableLayout";
+import { applyVariantStartFlags, setupTwoTeamStart } from "./startGameSetup";
+import { applyOutcomeFlags, resolveTurnHandoff } from "./turnResolve";
+
+function initialState(): GameState {
+  return {
+    phase: "LOBBY",
+    players: [],
+    balls: [],
+    activeTeam: null,
+    activeShooterId: null,
+    teamGroups: { SOLIDS: null, STRIPES: null },
+    remaining: { SOLIDS: 7, STRIPES: 7, RED: 7, YELLOW: 7, EIGHT: 1, CUE: 1, OBJECT: 0 },
+    ballInHand: false,
+    foulMessage: null,
+    logs: [],
+    winnerTeam: null,
+    winnerPlayerId: null,
+    aim: { shooterId: null, angle: 0, power: 0 },
+    shotId: 0,
+    spectatorLocks: {},
+    config: { variantId: DEFAULT_VARIANT_ID, caromMode: "LIBRE" },
+    pendingCall: null,
+    scores: {},
+    teamScores: { SOLIDS: 0, STRIPES: 0 },
+    shooterOrder: [],
+    shooterIndex: 0,
+    consecutiveFouls: { SOLIDS: 0, STRIPES: 0 },
+    freeShotsRemaining: 0,
+    freeBall: false,
+    ballInHandKitchen: false,
+    pushOutAvailable: false,
+    pushOutDeclared: false,
+  };
+}
 
 export class PoolGameEngine {
   public state: GameState;
   private teamShooterIndex: Record<TeamId, number> = { SOLIDS: 0, STRIPES: 0 };
   private preShotPocketed: Set<number> = new Set();
   private shotEvents: PhysicsEvent[] = [];
-  /** Captured in fireShot because phase becomes RESOLVING before finishShot. */
   private preShotWasBreak = false;
 
   constructor() {
-    this.state = {
-      phase: "LOBBY",
-      players: [],
-      balls: [],
-      activeTeam: null,
-      activeShooterId: null,
-      teamGroups: { SOLIDS: null, STRIPES: null },
-      remaining: { SOLIDS: 7, STRIPES: 7, EIGHT: 1, CUE: 1 },
-      ballInHand: false,
-      foulMessage: null,
-      logs: [],
-      winnerTeam: null,
-      aim: { shooterId: null, angle: 0, power: 0 },
-      shotId: 0,
-      spectatorLocks: {},
-    };
+    this.state = initialState();
   }
 
-  // --- Lobby / config ------------------------------------------------------
+  setConfig(partial: Partial<GameConfig>): boolean {
+    if (this.state.phase !== "LOBBY" && this.state.phase !== "CONFIG") return false;
+    if (partial.variantId && !getVariant(partial.variantId)) return false;
+    this.state.config = { ...this.state.config, ...partial };
+    if (partial.variantId === "FR_CAROM" && !this.state.config.caromMode) {
+      this.state.config.caromMode = "LIBRE";
+    }
+    return true;
+  }
+
   addPlayer(id: string, name: string, avatar: string, isHost: boolean): void {
     if (this.state.players.some((p) => p.id === id)) return;
     this.state.players.push({
@@ -56,17 +93,14 @@ export class PoolGameEngine {
     if (p) p.isReady = ready;
   }
 
-  /** Host assigns a player to a team (or null = spectator). Refuses to assign a
-   * team to a host-locked spectator. */
   assignTeam(playerId: string, team: TeamId | null): void {
     const p = this.state.players.find((pl) => pl.id === playerId);
     if (!p) return;
-    if (team !== null && this.isLocked(playerId)) return; // locked spectators stay spectators
+    if (team !== null && this.isLocked(playerId)) return;
     p.team = team;
   }
 
   setSpectatorLock(peerId: string, locked: boolean): void {
-    // Lock only applies to spectators (cannot "lock in player mode").
     if (locked) this.assignTeam(peerId, null);
     this.state.spectatorLocks[peerId] = locked;
   }
@@ -75,81 +109,77 @@ export class PoolGameEngine {
     return !!this.state.spectatorLocks[peerId];
   }
 
-  // --- Game lifecycle ------------------------------------------------------
-  startGame(): void {
-    const solids = this.state.players.filter((p) => p.team === "SOLIDS");
-    const stripes = this.state.players.filter((p) => p.team === "STRIPES");
-    if (solids.length === 0 && stripes.length === 0) {
-      this.state.logs = [];
-      pushLog(this.state, "Aucun joueur assigné à une équipe.", "warning");
+  setCall(shooterId: string, ballId: number | null, pocketIndex: number | null): void {
+    if (this.state.activeShooterId !== shooterId) return;
+    if (this.state.phase !== "BREAKING" && this.state.phase !== "SHOOTING" && this.state.phase !== "BALL_IN_HAND") {
       return;
     }
-    // Pick the first team that has players (the other may be empty → practice mode).
-    const firstTeam: TeamId = solids.length > 0 ? "SOLIDS" : "STRIPES";
-    const firstMembers = firstTeam === "SOLIDS" ? solids : stripes;
-    this.state.balls = buildRack();
-    this.state.teamGroups = { SOLIDS: null, STRIPES: null };
-    this.state.winnerTeam = null;
-    this.state.foulMessage = null;
-    this.state.activeTeam = firstTeam;
-    this.teamShooterIndex = { SOLIDS: 0, STRIPES: 0 };
-    this.state.activeShooterId = firstMembers[0].id;
-    this.state.ballInHand = true; // break: place cue ball in the kitchen
-    this.state.phase = "BREAKING";
-    this.state.logs = [];
-    recomputeRemaining(this.state);
-    if (solids.length === 0 || stripes.length === 0) {
-      pushLog(this.state, "Mode entraînement : une seule équipe présente.", "info");
-    }
-    pushLog(
-      this.state,
-      `Cassure ! ${shooterName(this.state)} (${teamLabel(firstTeam)}) commence.`,
-      "phase",
-    );
+    this.state.pendingCall = { ballId, pocketIndex, shooterId };
   }
 
-  // --- Aiming / ball-in-hand ----------------------------------------------
+  setPushOut(shooterId: string, declared: boolean): void {
+    if (this.state.activeShooterId !== shooterId) return;
+    if (!this.state.pushOutAvailable) return;
+    this.state.pushOutDeclared = declared;
+  }
+
+  startGame(): void {
+    const v = getVariant(this.state.config.variantId);
+    const { ok } = setupTwoTeamStart(this.state);
+    if (!ok) return;
+    this.teamShooterIndex = { SOLIDS: 0, STRIPES: 0 };
+
+    this.state.balls = buildRack(v.rackKind, {
+      colored: v.id === "EN_BLACKBALL",
+      tableProfile: v.tableProfile,
+    });
+    applyVariantStartFlags(this.state, v);
+    recomputeRemaining(this.state);
+  }
+
   setAim(shooterId: string, angle: number, power: number): void {
     if (this.state.activeShooterId !== shooterId) return;
     this.state.aim = { shooterId, angle, power };
   }
 
-  /** Drag the cue ball during ball-in-hand (does NOT consume ball-in-hand). */
   placeCueBall(shooterId: string, pos: { x: number; y: number }): void {
     if (!this.state.ballInHand || this.state.activeShooterId !== shooterId) return;
-    const cue = this.state.balls.find((b) => b.id === 0);
+    const cueId = activeCueBallId(this.state.config.variantId, this.state.activeTeam);
+    const cue = this.state.balls.find((b) => b.id === cueId);
     if (!cue) return;
-    const mode = placementModeForPhase(this.state.phase);
-    const next = clampCuePlacement(pos, mode, this.state.balls);
-    if (!next) return; // overlap — keep previous position
+    const v = getVariant(this.state.config.variantId);
+    const mode = placementModeForState(this.state);
+    const next = clampCuePlacement(pos, mode, this.state.balls, v.tableProfile);
+    if (!next) return;
     cue.pos = next;
     cue.pocketed = false;
     cue.pocketIndex = null;
   }
 
-  /** Confirm placement: ends ball-in-hand so the player can aim & shoot. */
   confirmPlacement(shooterId: string): void {
     if (!this.state.ballInHand || this.state.activeShooterId !== shooterId) return;
     this.state.ballInHand = false;
   }
 
-  /**
-   * Test / debug only — not exposed in the player UI (Idée 9).
-   * Re-enable ball-in-hand for the active shooter.
-   */
   requestBallInHand(shooterId: string): void {
     if (this.state.activeShooterId !== shooterId) return;
     if (this.state.phase !== "SHOOTING" && this.state.phase !== "BREAKING" && this.state.phase !== "BALL_IN_HAND") return;
     this.state.ballInHand = true;
   }
 
-  // --- Shooting -----------------------------------------------------------
   fireShot(shooterId: string, shot: ShotRequest): PhysicsEvent[] {
     if (this.state.activeShooterId !== shooterId) return [];
     if (this.state.phase !== "BREAKING" && this.state.phase !== "SHOOTING" && this.state.phase !== "BALL_IN_HAND") {
       return [];
     }
-    const cue = this.state.balls.find((b) => b.id === 0);
+    const v = getVariant(this.state.config.variantId);
+    if (!isReadyToShoot(this.state)) {
+      pushLog(this.state, "Annoncez la bille (et la poche) avant de tirer.", "warning");
+      return [];
+    }
+
+    const cueId = activeCueBallId(this.state.config.variantId, this.state.activeTeam);
+    const cue = this.state.balls.find((b) => b.id === cueId);
     if (!cue || cue.pocketed) return [];
 
     this.preShotWasBreak = this.state.phase === "BREAKING";
@@ -162,7 +192,6 @@ export class PoolGameEngine {
     const top = Math.max(-1, Math.min(1, shot.spinTop ?? 0));
     const fx = Math.cos(shot.angle);
     const fy = Math.sin(shot.angle);
-    // Mild side kick at strike; follow/draw applies after the first object hit.
     const px = -fy;
     const py = fx;
     const sideKick = side * SIDE_SPIN_SPEED * (0.35 + 0.65 * power);
@@ -179,52 +208,78 @@ export class PoolGameEngine {
 
     const who = shooterName(this.state);
     const team = this.state.activeTeam;
-    const teamBit = team ? ` (${teamLabel(team)})` : "";
+    const teamBit = team ? ` (${teamLabel(team, this.state.config.variantId)})` : "";
     const pct = Math.round(power * 100);
+    const call = this.state.pendingCall;
+    if (call?.ballId != null) {
+      const pocketBit = call.pocketIndex != null ? ` → poche ${call.pocketIndex + 1}` : "";
+      pushLog(this.state, `${who} annonce #${call.ballId}${pocketBit}.`, "info");
+    }
+    if (this.state.pushOutDeclared) {
+      pushLog(this.state, `${who}${teamBit} annonce un push-out.`, "info");
+    }
     if (this.preShotWasBreak) {
       pushLog(this.state, `${who}${teamBit} casse (${pct}%).`, "shot");
     } else {
       pushLog(this.state, `${who}${teamBit} tire (${pct}%).`, "shot");
     }
+    this.state.pushOutAvailable = false;
     return [];
   }
 
-  /** Advance physics one tick during a shot. Returns sound events. */
   tick(dt: number): PhysicsEvent[] {
     if (this.state.phase !== "RESOLVING") return [];
-    const events = step(this.state.balls, dt);
+    const v = getVariant(this.state.config.variantId);
+    const layout = getTableLayout(v.tableProfile);
+    const events = step(this.state.balls, dt, layout);
     this.shotEvents.push(...events);
     return events;
   }
 
-  /** Called when all balls have stopped. Resolves the outcome + turn. */
   finishShot(): void {
     const newlyPocketed = this.state.balls
       .filter((b) => b.pocketed && !this.preShotPocketed.has(b.id))
       .map((b) => b.id);
 
-    // Restore the cue ball if it was scratched (it stays in play).
+    const v = getVariant(this.state.config.variantId);
+
     if (this.state.balls.find((b) => b.id === 0)?.pocketed) {
-      resetCueBall(this.state.balls);
+      resetCueBall(this.state.balls, undefined, v.tableProfile);
     }
 
     recomputeRemaining(this.state);
     const outcome = evaluateShot(this.state, this.shotEvents, newlyPocketed, this.preShotWasBreak);
-    const team = this.state.activeTeam!;
-    const who = shooterName(this.state);
 
-    if (outcome.win) {
+    for (const id of outcome.respotIds) {
+      respotBall(this.state.balls, id, v.tableProfile);
+    }
+    recomputeRemaining(this.state);
+
+    const team = this.state.activeTeam;
+    const threeFoulLoss = applyOutcomeFlags(this.state, outcome, team);
+    if (threeFoulLoss) {
+      outcome.loss = threeFoulLoss;
+    }
+
+    if (outcome.win || outcome.winPlayerId) {
       logShotResolution(this.state, this.shotEvents, newlyPocketed, {
         foul: outcome.foul,
         foulReason: outcome.foulReason,
         continueShooting: false,
         groupAssigned: outcome.groupAssigned,
       });
-      this.state.winnerTeam = outcome.win;
+      if (outcome.win) this.state.winnerTeam = outcome.win;
+      if (outcome.winPlayerId) this.state.winnerPlayerId = outcome.winPlayerId;
       this.state.phase = "GAME_OVER";
-      pushLog(this.state, `🏆 ${teamLabel(outcome.win)} remporte la partie !`, "victory");
+      pushLog(
+        this.state,
+        `Victoire de ${teamLabel(outcome.win ?? "SOLIDS", this.state.config.variantId)} !`,
+        "victory",
+      );
+      this.state.pendingCall = null;
       return;
     }
+
     if (outcome.loss) {
       logShotResolution(this.state, this.shotEvents, newlyPocketed, {
         foul: outcome.foul,
@@ -237,64 +292,34 @@ export class PoolGameEngine {
       this.state.phase = "GAME_OVER";
       pushLog(
         this.state,
-        `💀 ${teamLabel(outcome.loss)} a empoché la 8 prématurément. Victoire de ${teamLabel(other)}.`,
+        `${teamLabel(outcome.loss, this.state.config.variantId)} perd. Victoire de ${teamLabel(other, this.state.config.variantId)}.`,
         "failure",
       );
+      this.state.pendingCall = null;
       return;
     }
 
-    if (outcome.foul) {
-      this.state.foulMessage = outcome.foulReason;
-    } else {
-      this.state.foulMessage = null;
-    }
+    this.state.foulMessage = outcome.foul ? outcome.foulReason : null;
 
-    let nextShooterName: string | null = null;
-    let nextTeam: TeamId | null = null;
-
-    if (outcome.continueShooting) {
-      this.state.phase = "SHOOTING";
-      this.state.ballInHand = false;
-    } else {
-      const other: TeamId = team === "SOLIDS" ? "STRIPES" : "SOLIDS";
-      const nextMembers = this.state.players.filter((p) => p.team === other);
-      if (nextMembers.length === 0) {
-        // Practice: no opponent — same shooter keeps the table.
-        this.state.phase = outcome.foul ? "BALL_IN_HAND" : "SHOOTING";
-        this.state.ballInHand = outcome.foul;
-        if (outcome.foul) {
-          nextShooterName = who;
-          nextTeam = team;
-        }
-      } else {
-        this.teamShooterIndex[other] = (this.teamShooterIndex[other] + 1);
-        this.advanceShooter(other);
-        this.state.activeTeam = other;
-        this.state.phase = outcome.foul ? "BALL_IN_HAND" : "SHOOTING";
-        this.state.ballInHand = outcome.foul;
-        nextShooterName = shooterName(this.state);
-        nextTeam = other;
-      }
-    }
+    const handoff = resolveTurnHandoff(this.state, outcome, v, this.teamShooterIndex);
 
     logShotResolution(this.state, this.shotEvents, newlyPocketed, {
       foul: outcome.foul,
       foulReason: outcome.foulReason,
-      continueShooting: outcome.continueShooting,
+      continueShooting: handoff.keptTurn && outcome.continueShooting,
       groupAssigned: outcome.groupAssigned,
-      nextShooterName: outcome.continueShooting ? null : nextShooterName,
-      nextTeam: outcome.continueShooting ? null : nextTeam,
+      nextShooterName: handoff.keptTurn && outcome.continueShooting ? null : handoff.nextShooterName,
+      nextTeam: handoff.keptTurn && outcome.continueShooting ? null : handoff.nextTeam,
     });
-  }
 
-  private advanceShooter(team: TeamId): void {
-    const members = this.state.players.filter((p) => p.team === team);
-    if (members.length === 0) return;
-    const idx = this.teamShooterIndex[team] % members.length;
-    this.state.activeShooterId = members[idx].id;
+    this.state.pendingCall = null;
   }
 
   isShooting(): boolean {
     return this.state.phase === "RESOLVING" && isMoving(this.state.balls);
+  }
+
+  getVariantId(): VariantId {
+    return this.state.config.variantId;
   }
 }
