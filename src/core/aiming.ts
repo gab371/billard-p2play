@@ -97,7 +97,7 @@ export function predictShot(cueBall: Ball, balls: Ball[], aimAngle: number): Aim
         const dLen = len(cueDeflect);
         cueDeflect = dLen > 1e-6 ? scale(cueDeflect, 1 / dLen) : null;
 
-        const drawLen = 0.4;
+        const drawLen = 0.4 / 3; // object + deflect preview (short, mobile-pool style)
         segments.push({
           from: bestBall.pos,
           to: add(bestBall.pos, scale(targetDir, drawLen)),
