@@ -13,3 +13,6 @@ dist-ssr
 .idea
 .DS_Store
 *.sw?
+
+test-results/*
+

@@ -29,7 +29,7 @@ export const AIM_RAILS: Segment[] = POOL_LAYOUT.aimRails;
 
 export const FPS = 60;
 export const DT = 1 / FPS;
-export const STREAM_HZ = 30;
+export const STREAM_HZ = 60;
 
 export const SIDE_SPIN_SPEED = 0.12;
 export const FOLLOW_DRAW_FACTOR = 0.38;
