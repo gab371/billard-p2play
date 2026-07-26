@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { PeerManagerLike } from "p2play-core";
+import { TextChatPanel } from "p2play-core/chat";
 import { useGame } from "./hooks/useGame";
 import { Lobby } from "./components/game/Lobby";
 import { PoolTable } from "./components/game/PoolTable";
@@ -7,7 +8,6 @@ import { Scoreboard } from "./components/game/Scoreboard";
 import { LogConsole } from "./components/game/LogConsole";
 import { SoundToggle } from "./components/ui/SoundToggle";
 import { RulesModal } from "./components/game/RulesModal";
-import { Send } from "lucide-react";
 
 interface AppProps {
   isEmbedded?: boolean;
@@ -23,7 +23,6 @@ interface AppProps {
 
 export default function App({ isEmbedded = false, externalPeerManager, playerName, playerAvatar, isHost, lateJoin, gameConfig, hubPhase, onExit }: AppProps) {
   const game = useGame({ externalPeerManager, isEmbedded, playerName, playerAvatar, isHost, lateJoin, gameConfig, hubPhase });
-  const [chatInput, setChatInput] = useState("");
   const [showRules, setShowRules] = useState(false);
 
   const {
@@ -32,13 +31,6 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
     hostRoom, joinRoom, toggleReady, startGame, assignTeam, placeCueBall, confirmPlacement, fireShot, setAim, setCall, setPushOut,
     sendChatMessage, disconnect,
   } = game;
-
-  const handleSendChat = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    sendChatMessage(chatInput.trim());
-    setChatInput("");
-  };
 
   const showLobby = !gameState || gameState.phase === "LOBBY" || gameState.phase === "CONFIG";
 
@@ -99,19 +91,14 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
             </div>
             <aside className="relative z-20 lg:row-span-2 space-y-4 order-3 lg:order-none">
               <div className="h-[220px]"><LogConsole logs={gameState!.logs} /></div>
-              <div className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-4 shadow-xl flex flex-col h-[220px]">
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Tchat</h3>
-                <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
-                  {chatMessages.map((msg, i) => (
-                    <div key={i} className="text-xs"><span className="font-bold text-zinc-300">{msg.sender} : </span><span className="text-zinc-400">{msg.text}</span></div>
-                  ))}
-                  {chatMessages.length === 0 && <div className="text-zinc-600 text-center py-6 text-xs">Aucun message.</div>}
-                </div>
-                <form onSubmit={handleSendChat} className="flex gap-2 mt-2">
-                  <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Message…" className="flex-1 px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-850 focus:border-amber-500 text-xs text-zinc-200 outline-none" />
-                  <button type="submit" className="w-8 h-8 flex items-center justify-center bg-amber-600 hover:bg-amber-500 text-zinc-900 rounded-xl"><Send className="w-3.5 h-3.5" /></button>
-                </form>
-              </div>
+              <TextChatPanel
+                messages={chatMessages}
+                onSend={sendChatMessage}
+                title="Tchat"
+                placeholder="Message…"
+                emptyLabel="Aucun message."
+                className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-4 shadow-xl flex flex-col h-[220px] text-xs text-zinc-100 font-sans"
+              />
             </aside>
             <div className="lg:col-span-3 space-y-4 order-2 lg:order-none relative z-0 overflow-visible">
               <PoolTable
