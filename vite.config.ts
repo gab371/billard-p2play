@@ -16,6 +16,9 @@ export default defineConfig(({ mode }) => {
   return {
     base: './',
     plugins: [react()],
+    optimizeDeps: {
+      exclude: ["p2play-core"],
+    },
     resolve: {
       dedupe: ["react", "react-dom"],
       alias: {
@@ -26,7 +29,7 @@ export default defineConfig(({ mode }) => {
     // `define` MUST be at the root (not nested in `build`) to avoid
     // "process is not defined" in the browser for the lib build.
     define: {
-      __APP_VERSION__: JSON.stringify('0.1.0'),
+      __APP_VERSION__: JSON.stringify('0.3.0'),
       'process.env.NODE_ENV': JSON.stringify('production'),
       'process.env': '{}',
     },

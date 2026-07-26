@@ -1,33 +1,10 @@
 import { useState } from "react";
-import type { GameConfig, Player, TeamId } from "../../../core/types";
-import type { VariantId, CaromMode } from "../../../core/variants";
-import { getVariant, VARIANT_FAMILIES, VARIANTS, CAROM_MODES } from "../../../core/variants";
+import type { GameConfig, Player, TeamId } from "../../core/types";
+import type { VariantId, CaromMode } from "../../core/variants";
+import { getVariant, VARIANT_FAMILIES, VARIANTS, CAROM_MODES } from "../../core/variants";
+import { copyRoomUrlToClipboard } from "p2play-core/url";
 
-export const POOL_AVATARS = ["🎱", "🟠", "🟡", "🎯", "🤠", "👑", "🎩", "🎱"];
-
-export interface LobbyProps {
-  myPeerId: string | null;
-  hostPeerId: string | null;
-  isHost: boolean;
-  players: Player[];
-  spectatorLocks?: { [peerId: string]: boolean };
-  status: string;
-  error: string | null;
-  isEmbedded?: boolean;
-  variantId?: VariantId;
-  caromMode?: CaromMode;
-  hostRoom: (name: string, avatar: string) => void;
-  joinRoom: (name: string, avatar: string, roomId: string) => void;
-  toggleReady: (ready: boolean) => void;
-  startGame: () => void;
-  assignTeam: (playerId: string, team: TeamId | null) => void;
-  onLockSpectator?: (peerId: string, locked: boolean) => void;
-  onChangeConfig?: (config: Partial<GameConfig>) => void;
-  disconnect: () => void;
-  onExit?: () => void;
-}
-
-export function VariantPicker({
+function VariantPicker({
   variantId,
   caromMode = "LIBRE",
   isHost,
@@ -106,51 +83,24 @@ export function VariantPicker({
   );
 }
 
-export function AvatarGrid({ value, onChange, disabled }: {
-  value: string; onChange: (a: string) => void; disabled?: boolean;
-}) {
-  return (
-    <div className="grid grid-cols-8 gap-2 bg-zinc-950 p-2.5 rounded-2xl border border-zinc-800/60">
-      {POOL_AVATARS.map((av) => (
-        <button key={av} type="button" onClick={() => onChange(av)} disabled={disabled}
-          className={`text-2xl p-1.5 rounded-xl transition-all flex items-center justify-center aspect-square ${
-            value === av ? "bg-amber-500/20 border border-amber-500 scale-110" : "hover:bg-zinc-850"
-          }`}>{av}</button>
-      ))}
-    </div>
-  );
-}
-
-export function NameInput({ value, onChange, disabled }: {
-  value: string; onChange: (s: string) => void; disabled?: boolean;
-}) {
-  return (
-    <input type="text" placeholder="Entrez votre nom..." value={value} maxLength={14} disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full px-4 py-3 rounded-2xl bg-zinc-950 border border-zinc-800 focus:border-amber-500 text-zinc-100 outline-none transition-all disabled:opacity-50" />
-  );
-}
-
-export function CopyButton({ code }: { code: string | null }) {
+function CopyButton({ code }: { code: string | null }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     if (!code) return;
-    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(code).then(done).catch(() => fallback(code, done));
-    } else fallback(code, done);
-  };
-  const fallback = (text: string, done: () => void) => {
-    const ta = document.createElement("textarea");
-    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.focus(); ta.select();
-    try { document.execCommand("copy"); done(); } catch { /* ignore */ }
-    document.body.removeChild(ta);
+    copyRoomUrlToClipboard(code).then((success) => {
+      if (success) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    });
   };
   return (
-    <button onClick={copy} title="Copier le code"
-      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border border-zinc-700">
-      {copied ? "Copié !" : "Copier"}
+    <button
+      onClick={copy}
+      title="Copier le lien d'invitation"
+      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border border-zinc-700"
+    >
+      {copied ? "Lien copié !" : "🔗 Copier le lien"}
     </button>
   );
 }
@@ -199,7 +149,7 @@ function TeamButtons({ player, isHost, myPeerId, assignTeam, locked, onLockSpect
   );
 }
 
-export interface RoomConnectedViewProps {
+export interface LobbyRoomProps {
   hostPeerId: string | null;
   isHost: boolean;
   players: Player[];
@@ -217,11 +167,12 @@ export interface RoomConnectedViewProps {
   onExit?: () => void;
 }
 
-export function RoomConnectedView({
+/** Connected-room lobby: variant picker, teams, ready / start. */
+export function LobbyRoom({
   hostPeerId, isHost, players, myPeerId, isEmbedded, spectatorLocks = {},
   variantId = "US_EIGHT", caromMode = "LIBRE", assignTeam, onLockSpectator, onChangeConfig,
   startGame, toggleReady, disconnect, onExit,
-}: RoomConnectedViewProps) {
+}: LobbyRoomProps) {
   const [localReady, setLocalReady] = useState(false);
   const solids = players.filter((p) => p.team === "SOLIDS").length;
   const stripes = players.filter((p) => p.team === "STRIPES").length;

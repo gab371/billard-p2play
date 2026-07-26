@@ -147,7 +147,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
 
       <footer className="max-w-7xl mx-auto w-full text-center text-[10px] text-zinc-600 py-6 px-4 border-t border-zinc-900 flex justify-between items-center mt-8">
         <div>
-          P2Play Billards - Réseau Privé Peer-to-Peer - Version v0.1.0
+          P2Play Billards - Réseau Privé Peer-to-Peer - Version v0.3.0
         </div>
         <a
           href="https://github.com/gab371/billard-p2play"
