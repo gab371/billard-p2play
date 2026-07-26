@@ -1,0 +1,9 @@
+{
+  "key": "pool",
+  "name": "P2Play Billards",
+  "emoji": "🎱",
+  "desc": "Billard par équipes + spectateurs.",
+  "hasPreConfig": false,
+  "avatars": ["🎱", "🎯", "🔥", "👑", "🏆", "🤠"],
+  "shellBackground": "radial-gradient(circle at center, #0a1f1a 0%, #09090b 100%)"
+}
