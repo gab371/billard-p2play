@@ -16,9 +16,6 @@ export default defineConfig(({ mode }) => {
   return {
     base: './',
     plugins: [react()],
-    optimizeDeps: {
-      exclude: ["p2play-core"],
-    },
     resolve: {
       dedupe: ["react", "react-dom"],
       alias: {

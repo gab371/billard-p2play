@@ -1,6 +1,6 @@
 import { P2PlayLobby } from "p2play-core";
 
-const POOL_AVATARS = ["🎱", "🟠", "🟡", "🎯", "🤠", "👑", "🎩", "🎱"];
+const POOL_AVATARS = ["🎱", "🟠", "🟡", "🎯", "🤠", "👑", "🎩", "⭐"];
 
 interface LobbyHomeProps {
   status: string;
