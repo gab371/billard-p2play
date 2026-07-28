@@ -97,6 +97,7 @@ function TeamCard({
             <div key={player.id} className={`flex items-center gap-1.5 text-xs ${player.id === myPeerId ? "text-amber-300" : "text-zinc-300"}`}>
               <span className="text-base leading-none">{player.avatar}</span>
               <span className="truncate max-w-[7rem]">{player.name}</span>
+              {player.disconnected && <span className="text-[9px] text-red-400">⚠</span>}
               {isShooter && <span className="text-[9px] text-amber-400 font-bold">tire</span>}
             </div>
           );

@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  attachPresenceHandlers,
+  createSeatEngine,
+  handleJoinGameSeat,
+} from "p2play-core/presence";
 import { usePeer } from "./usePeer";
 import { PoolGameEngine } from "../core/gameEngine";
 import { sanitizeGameState, shotPayload } from "../network/protocol";
@@ -141,83 +146,119 @@ export function useGame(options?: UseGameOptions) {
       }, 0);
     }
 
-    peerManager.hostActionHandler = (_sender, rawMsg) => {
-      const msg = rawMsg as NetworkMessage;
-      if (msg.type !== "ACTION") return;
-      const { actionName, playerId, payload } = msg;
-      switch (actionName) {
-        case "JOIN_GAME": engine.addPlayer(playerId, payload.name, payload.avatar, playerId === myPeerId); break;
-        case "TOGGLE_READY": engine.setPlayerReady(playerId, payload.ready); break;
-        case "START_GAME": if (playerId === myPeerId) engine.startGame(); break;
-        case "ASSIGN_TEAM": {
-          const targetId = payload.targetPlayerId as string;
-          const team = payload.team as TeamId | null;
-          const target = engine.state.players.find((p) => p.id === targetId);
-          const isSelf = targetId === playerId;
-          const requesterIsHost = playerId === myPeerId;
-          // Self: any change (engine blocks locked → team).
-          // Host on others: spectator only, or rebalance if already on a team — never promote spectator → team.
-          if (isSelf) {
-            engine.assignTeam(targetId, team);
-          } else if (requesterIsHost) {
-            if (team === null || (target && target.team !== null)) {
+    const getSeatEngine = () =>
+      createSeatEngine({
+        getPhase: () => engine.state.phase,
+        lobbyPhases: ["LOBBY", "CONFIG"],
+        getPlayers: () => engine.state.players,
+        markDisconnected: (id) => engine.markDisconnected(id),
+        isDisconnected: (id) => engine.isDisconnected(id),
+        remapPlayerId: (o, n, p) => engine.remapPlayerId(o, n, p),
+        removePlayer: (id) => engine.removePlayer(id),
+      });
+
+    const presence = attachPresenceHandlers({
+      peerManager,
+      getEngine: getSeatEngine,
+      onBroadcast: () => broadcastSanitizedStates(engine.state),
+      onHostAction: (_sender, rawMsg) => {
+        const msg = rawMsg as NetworkMessage;
+        if (msg.type !== "ACTION") return;
+        const { actionName, playerId, payload } = msg;
+        switch (actionName) {
+          case "JOIN_GAME": {
+            handleJoinGameSeat({
+              engine: getSeatEngine(),
+              playerId,
+              payload: { name: payload?.name, avatar: payload?.avatar },
+              isHostPlayer: playerId === myPeerId,
+              addPlayer: (id, name, avatar, isHost) =>
+                engine.addPlayer(id, name, avatar, isHost),
+            });
+            break;
+          }
+          case "TOGGLE_READY":
+            engine.setPlayerReady(playerId, payload.ready);
+            break;
+          case "START_GAME":
+            if (playerId === myPeerId) engine.startGame();
+            break;
+          case "ASSIGN_TEAM": {
+            const targetId = payload.targetPlayerId as string;
+            const team = payload.team as TeamId | null;
+            const target = engine.state.players.find((p) => p.id === targetId);
+            const isSelf = targetId === playerId;
+            const requesterIsHost = playerId === myPeerId;
+            // Self: any change (engine blocks locked → team).
+            // Host on others: spectator only, or rebalance if already on a team — never promote spectator → team.
+            if (isSelf) {
               engine.assignTeam(targetId, team);
+            } else if (requesterIsHost) {
+              if (team === null || (target && target.team !== null)) {
+                engine.assignTeam(targetId, team);
+              }
             }
+            break;
           }
-          break;
+          case "LOCK_SPECTATOR":
+            // Host-only. Lock = force spectator + prevent self-assign to a team.
+            if (playerId === myPeerId) {
+              const targetId = payload.peerId as string;
+              const locked = !!payload.locked;
+              if (locked) engine.assignTeam(targetId, null);
+              engine.setSpectatorLock(targetId, locked);
+            }
+            break;
+          case "CHANGE_CONFIG":
+            if (playerId === myPeerId) engine.setConfig(payload.config ?? {});
+            break;
+          case "SET_CALL":
+            engine.setCall(
+              playerId,
+              payload.ballId ?? null,
+              payload.pocketIndex !== undefined ? payload.pocketIndex : null,
+            );
+            break;
+          case "SET_PUSH_OUT":
+            engine.setPushOut(playerId, !!payload.declared);
+            break;
+          case "SET_AIM":
+            engine.setAim(playerId, payload.angle, payload.power);
+            break;
+          case "PLACE_CUE_BALL":
+            engine.placeCueBall(playerId, payload.pos);
+            break;
+          case "CONFIRM_PLACEMENT":
+            engine.confirmPlacement(playerId);
+            break;
+          case "REQUEST_BALL_IN_HAND":
+            engine.requestBallInHand(playerId);
+            break;
+          case "FIRE_SHOT": {
+            const s: ShotRequest = {
+              angle: payload.angle,
+              power: payload.power,
+              spinSide: payload.spinSide ?? payload.spin ?? 0,
+              spinTop: payload.spinTop ?? 0,
+            };
+            engine.setAim(playerId, s.angle, s.power);
+            const pre = engine.fireShot(playerId, s);
+            if (pre.length === 0 && engine.state.phase === "RESOLVING") {
+              pendingShotRef.current = s;
+              playSfx("cue", s.power);
+              runShotLoop();
+            }
+            break;
+          }
         }
-        case "LOCK_SPECTATOR":
-          // Host-only. Lock = force spectator + prevent self-assign to a team.
-          if (playerId === myPeerId) {
-            const targetId = payload.peerId as string;
-            const locked = !!payload.locked;
-            if (locked) engine.assignTeam(targetId, null);
-            engine.setSpectatorLock(targetId, locked);
-          }
-          break;
-        case "CHANGE_CONFIG":
-          if (playerId === myPeerId) engine.setConfig(payload.config ?? {});
-          break;
-        case "SET_CALL":
-          engine.setCall(
-            playerId,
-            payload.ballId ?? null,
-            payload.pocketIndex !== undefined ? payload.pocketIndex : null,
-          );
-          break;
-        case "SET_PUSH_OUT":
-          engine.setPushOut(playerId, !!payload.declared);
-          break;
-        case "SET_AIM": engine.setAim(playerId, payload.angle, payload.power); break;
-        case "PLACE_CUE_BALL": engine.placeCueBall(playerId, payload.pos); break;
-        case "CONFIRM_PLACEMENT": engine.confirmPlacement(playerId); break;
-        case "REQUEST_BALL_IN_HAND": engine.requestBallInHand(playerId); break;
-        case "FIRE_SHOT": {
-          const s: ShotRequest = {
-            angle: payload.angle,
-            power: payload.power,
-            spinSide: payload.spinSide ?? payload.spin ?? 0,
-            spinTop: payload.spinTop ?? 0,
-          };
-          engine.setAim(playerId, s.angle, s.power);
-          const pre = engine.fireShot(playerId, s);
-          if (pre.length === 0 && engine.state.phase === "RESOLVING") {
-            pendingShotRef.current = s;
-            playSfx("cue", s.power);
-            runShotLoop();
-          }
-          break;
-        }
-      }
-      broadcastSanitizedStates(engine.state);
-    };
+        broadcastSanitizedStates(engine.state);
+      },
+    });
 
-    peerManager.onPeerStatusChange = (peerId: string, peerStatus: "CONNECTED" | "DISCONNECTED") => {
-      if (peerStatus === "DISCONNECTED") { engine.removePlayer(peerId); broadcastSanitizedStates(engine.state); }
-      else if (peerStatus === "CONNECTED") broadcastSanitizedStates(engine.state);
+    return () => {
+      presence.dispose();
+      stopLoop();
     };
-
-    return () => { stopLoop(); peerManager.hostActionHandler = null; peerManager.onPeerStatusChange = null; };
   }, [isHost, myPeerId, peerManager, playSfx, broadcastSanitizedStates, runShotLoop, stopLoop, options?.isEmbedded, options?.externalPeerManager, options?.playerName, options?.playerAvatar]);
 
   // Embedded guests must announce themselves to the host engine.
@@ -254,7 +295,7 @@ export function useGame(options?: UseGameOptions) {
   // Client triggers
   const hostRoom = useCallback(async (name: string, avatar: string) => {
     setLocalPlayerName(name); setLocalPlayerAvatar(avatar);
-    const roomId = await hostGame();
+    const roomId = await hostGame(undefined, { username: name, avatar });
     const engine = new PoolGameEngine();
     gameEngineRef.current = engine;
     engine.addPlayer(roomId, name, avatar, true);
@@ -263,9 +304,9 @@ export function useGame(options?: UseGameOptions) {
 
   const joinRoom = useCallback(async (name: string, avatar: string, roomId: string) => {
     setLocalPlayerName(name); setLocalPlayerAvatar(avatar);
-    const id = await joinGame(roomId);
+    const { peerId } = await joinGame(roomId, { username: name, avatar });
     setTimeout(() => {
-      peerManager.sendToHost("ACTION", { actionName: "JOIN_GAME", playerId: id, payload: { name, avatar } });
+      peerManager.sendToHost("ACTION", { actionName: "JOIN_GAME", playerId: peerId, payload: { name, avatar } });
     }, 1000);
   }, [joinGame, peerManager]);
 

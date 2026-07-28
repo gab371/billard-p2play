@@ -22,6 +22,7 @@ import {
 import { getTableLayout } from "./tableLayout";
 import { applyVariantStartFlags, setupTwoTeamStart } from "./startGameSetup";
 import { applyOutcomeFlags, resolveTurnHandoff } from "./turnResolve";
+import { remapRecordKey } from "p2play-core/presence";
 
 function initialState(): GameState {
   return {
@@ -81,6 +82,34 @@ export class PoolGameEngine {
     this.state.players.push({
       id, name, avatar, isHost, isReady: false, team: null, rotationIndex: 0,
     });
+  }
+
+  markDisconnected(id: string): void {
+    const p = this.state.players.find(pl => pl.id === id);
+    if (p) p.disconnected = true;
+  }
+
+  isDisconnected(id: string): boolean {
+    return !!this.state.players.find(pl => pl.id === id)?.disconnected;
+  }
+
+  remapPlayerId(
+    oldId: string,
+    newId: string,
+    profile?: { username?: string; avatar?: string },
+  ): boolean {
+    const p = this.state.players.find(pl => pl.id === oldId);
+    if (!p) return false;
+    p.id = newId;
+    p.disconnected = false;
+    if (profile?.username) p.name = profile.username;
+    if (profile?.avatar) p.avatar = profile.avatar;
+    if (this.state.activeShooterId === oldId) this.state.activeShooterId = newId;
+    if (this.state.pendingCall?.shooterId === oldId) {
+      this.state.pendingCall = { ...this.state.pendingCall, shooterId: newId };
+    }
+    remapRecordKey(this.state.spectatorLocks, oldId, newId);
+    return true;
   }
 
   removePlayer(id: string): void {

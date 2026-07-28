@@ -31,6 +31,7 @@ export interface Player {
   isReady: boolean;
   team: TeamId | null;
   rotationIndex: number;
+  disconnected?: boolean;
 }
 
 export type GamePhase =
