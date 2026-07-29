@@ -1,4 +1,5 @@
 import type { GameState, GamePhase, Player, TeamId, BallGroup } from "../../core/types";
+import { Badge } from "p2play-core/ui";
 import { getVariant } from "../../core/variants";
 import { lowestObjectBall } from "../../core/rules";
 
@@ -89,7 +90,7 @@ function TeamCard({
       {!assigned && variant.groups && (
         <div className="mb-2 text-[10px] text-zinc-600">Groupe à déterminer</div>
       )}
-      <div className={`flex flex-wrap gap-x-3 gap-y-1 ${compact ? "" : "flex-col space-y-1"}`}>
+      <div className={`flex flex-wrap gap-x-3 gap-y-1 ${compact ? "" : "flex-col gap-1"}`}>
         {players.length === 0 && <div className="text-[10px] text-zinc-600">Aucun joueur</div>}
         {players.map((player) => {
           const isShooter = state.activeShooterId === player.id && isActive;
@@ -97,7 +98,7 @@ function TeamCard({
             <div key={player.id} className={`flex items-center gap-1.5 text-xs ${player.id === myPeerId ? "text-amber-300" : "text-zinc-300"}`}>
               <span className="text-base leading-none">{player.avatar}</span>
               <span className="truncate max-w-[7rem]">{player.name}</span>
-              {player.disconnected && <span className="text-[9px] text-red-400">⚠</span>}
+              {player.disconnected && <Badge variant="destructive" className="text-[9px] h-4 px-1.5">Déconnecté</Badge>}
               {isShooter && <span className="text-[9px] text-amber-400 font-bold">tire</span>}
             </div>
           );

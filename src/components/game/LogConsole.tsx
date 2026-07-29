@@ -13,6 +13,7 @@ export function LogConsole({ logs }: LogConsoleProps) {
       emptyLabel="Aucun événement."
       className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-5 shadow-xl flex flex-col h-full min-h-[200px] text-xs font-mono text-zinc-100"
       maxHeight="240px"
+      scrollbarAccent="emerald"
     />
   );
 }

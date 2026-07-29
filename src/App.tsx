@@ -1,12 +1,14 @@
 import { useState } from "react";
 import type { PeerManagerLike } from "p2play-core";
+import { RoomCodeBadge } from "p2play-core";
 import { TextChatPanel } from "p2play-core/chat";
 import { useGame } from "./hooks/useGame";
 import { Lobby } from "./components/game/Lobby";
 import { PoolTable } from "./components/game/PoolTable";
 import { Scoreboard } from "./components/game/Scoreboard";
 import { LogConsole } from "./components/game/LogConsole";
-import { SoundToggle } from "./components/ui/SoundToggle";
+import { SoundToggle } from "p2play-core/ui";
+import { soundManager } from "./core/soundFX";
 import { RulesModal } from "./components/game/RulesModal";
 
 interface AppProps {
@@ -47,12 +49,10 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
           <button type="button" onClick={() => setShowRules(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 rounded-full border border-zinc-800 font-bold transition-all" title="Règles">
             <span>Règles</span>
           </button>
-          <SoundToggle className="bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 border-zinc-800" />
+          <SoundToggle soundManager={soundManager} className="bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 border-zinc-800" />
           {gameState && gameState.phase !== "LOBBY" && gameState.phase !== "CONFIG" && (
             <>
-              <span className="text-xs text-zinc-400 font-mono bg-zinc-900 px-3 py-1.5 rounded-full border border-zinc-800">
-                Salon : <span className="text-amber-400 font-bold">{hostPeerId}</span>
-              </span>
+              {hostPeerId && <RoomCodeBadge code={hostPeerId} accentClassName="text-amber-400" />}
               <button type="button" onClick={isEmbedded && onExit && gameIsHost ? onExit : disconnect} className="text-xs px-2.5 py-1.5 bg-rose-950/20 hover:bg-rose-900/20 text-rose-400 border border-rose-900/30 rounded-xl transition-all font-bold" title={isEmbedded ? (gameIsHost ? "Retour au Hub" : "Quitter le Hub (la partie continue)") : "Quitter"}>
                 {isEmbedded ? (gameIsHost ? "← Hub" : "Quitter") : "Quitter"}
               </button>
@@ -98,6 +98,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
                 placeholder="Message…"
                 emptyLabel="Aucun message."
                 className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-4 shadow-xl flex flex-col h-[220px] text-xs text-zinc-100 font-sans"
+                scrollbarAccent="emerald"
               />
             </aside>
             <div className="lg:col-span-3 space-y-4 order-2 lg:order-none relative z-0 overflow-visible">
