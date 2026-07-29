@@ -2,6 +2,7 @@ import type { GameState, GamePhase, Player, TeamId, BallGroup } from "../../core
 import { Badge } from "p2play-core/ui";
 import { getVariant } from "../../core/variants";
 import { lowestObjectBall } from "../../core/rules";
+import { ExpandToggle } from "./ExpandToggle";
 
 const PHASE_LABEL: Partial<Record<GamePhase, string>> = {
   BREAKING: "Cassure",
@@ -151,20 +152,36 @@ function PhaseCard({ state }: { state: GameState }) {
 interface ScoreboardProps {
   state: GameState;
   myPeerId: string | null;
+  boardExpanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 /** Always Team 1 | phase | Team 2 — every variant is team-vs-team. */
-export function Scoreboard({ state, myPeerId }: ScoreboardProps) {
+export function Scoreboard({
+  state,
+  myPeerId,
+  boardExpanded = false,
+  onToggleExpand,
+}: ScoreboardProps) {
   const solids = state.players.filter((p) => p.team === "SOLIDS");
   const stripes = state.players.filter((p) => p.team === "STRIPES");
   const spectators = state.players.filter((p) => p.team === null);
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-stretch">
-        <TeamCard team="SOLIDS" players={solids} state={state} myPeerId={myPeerId} compact />
-        <PhaseCard state={state} />
-        <TeamCard team="STRIPES" players={stripes} state={state} myPeerId={myPeerId} compact />
+      <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+        <div className="grid flex-1 grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-stretch min-w-0">
+          <TeamCard team="SOLIDS" players={solids} state={state} myPeerId={myPeerId} compact />
+          <PhaseCard state={state} />
+          <TeamCard team="STRIPES" players={stripes} state={state} myPeerId={myPeerId} compact />
+        </div>
+        {onToggleExpand && (
+          <ExpandToggle
+            expanded={boardExpanded}
+            onToggle={onToggleExpand}
+            className="shrink-0 self-center sm:self-stretch w-9 sm:w-10 min-h-9 flex items-center justify-center rounded-xl border border-zinc-700 bg-zinc-950/90 text-zinc-200 hover:border-amber-400/60 transition-all"
+          />
+        )}
       </div>
       {spectators.length > 0 && (
         <div className="px-3 py-2 rounded-xl border border-zinc-800 bg-zinc-900/30 flex flex-wrap items-center gap-2">

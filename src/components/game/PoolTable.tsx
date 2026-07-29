@@ -26,20 +26,23 @@ interface PoolTableProps {
   onAim?: (angle: number, power: number) => void;
   onSetCall?: (ballId: number | null, pocketIndex: number | null) => void;
   onSetPushOut?: (declared: boolean) => void;
+  /** When true, fit the whole frame (wood included) inside the column — no bleed under side panels. */
+  boardExpanded?: boolean;
 }
 
 const RAIL = TABLE_RAIL_PX;
 const CUE_PAD = 40;
-const INSET = RAIL + CUE_PAD;
 const PLACE_THROTTLE_MS = 40;
 
 export function PoolTable({
   state, isMyTurn, amSpectator, isHost, engineRef, lastFrame,
   onFire, onPlaceCueBall, onConfirmPlacement, onAim, onSetCall, onSetPushOut,
+  boardExpanded = false,
 }: PoolTableProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, ox: 0, oy: 0 });
   const [size, setSize] = useState({ w: 800, h: 464 });
+  const [railPx, setRailPx] = useState(RAIL);
   const [controlMode, setControlMode] = useState<ControlMode>(() => loadControlMode());
   const [english, setEnglish] = useState<EnglishOffset>({ side: 0, top: 0 });
   const [englishOpen, setEnglishOpen] = useState(false);
@@ -72,21 +75,31 @@ export function PoolTable({
   useEffect(() => {
     const parent = canvasRef.current?.parentElement;
     if (!parent) return;
-    const ro = new ResizeObserver((entries) => {
-      const r = entries[0].contentRect;
-      const layoutW = Math.max(320, r.width);
-      const feltW = Math.max(1, layoutW - RAIL * 2);
+    const update = (width: number) => {
+      const layoutW = Math.max(320, width);
+      // Keep wood thickness proportional to table scale so fullscreen doesn't look
+      // like a thin strip with oversized cushions (blue-frame look).
+      const approxScale = Math.max(1, (layoutW - RAIL * 2) / layout.width);
+      const visualRail = Math.min(56, Math.max(RAIL, Math.round(approxScale * 0.09)));
+      const feltW = Math.max(1, layoutW - visualRail * 2);
       const scale = feltW / layout.width;
       const feltH = layout.height * scale;
-      setSize({ w: feltW + INSET * 2, h: feltH + INSET * 2 });
+      const inset = visualRail + CUE_PAD;
+      setRailPx(visualRail);
+      setSize({ w: feltW + inset * 2, h: feltH + inset * 2 });
+    };
+    const ro = new ResizeObserver((entries) => {
+      update(entries[0].contentRect.width);
     });
     ro.observe(parent);
+    update(parent.getBoundingClientRect().width);
     return () => ro.disconnect();
-  }, [layout.width, layout.height]);
+  }, [layout.width, layout.height, boardExpanded]);
 
   useEffect(() => {
-    const scale = (size.w - INSET * 2) / layout.width;
-    viewRef.current = { scale, ox: INSET, oy: INSET };
+    const inset = railPx + CUE_PAD;
+    const scale = (size.w - inset * 2) / layout.width;
+    viewRef.current = { scale, ox: inset, oy: inset };
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
@@ -96,7 +109,7 @@ export function PoolTable({
     canvas.style.height = `${size.h}px`;
     const ctx = canvas.getContext("2d");
     if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }, [size, layout.width]);
+  }, [size, layout.width, railPx]);
 
   const resolveBalls = useCallback(() => {
     const base = (isHost ? engineRef.current?.state?.balls : null) ?? state.balls ?? [];
@@ -207,7 +220,7 @@ export function PoolTable({
     if (!ctx) return;
     const view = viewRef.current;
     timeRef.current = performance.now();
-    drawTable(ctx, view, size.w, size.h, timeRef.current, RAIL, layout);
+    drawTable(ctx, view, size.w, size.h, timeRef.current, railPx, layout);
 
     const drawn = localCuePosRef.current
       ? balls.map((ball: any) =>
@@ -290,7 +303,8 @@ export function PoolTable({
           onPowerChange={setBarrePower}
           onFire={handleBarreRelease}
         />
-        <div className="flex-1 min-w-0 relative z-0 overflow-visible">
+        {/* Expanded: clip cue-pad bleed so wood never slips under journal/force. */}
+        <div className={`flex-1 min-w-0 relative z-0 ${boardExpanded ? "overflow-x-clip" : "overflow-visible"}`}>
           <canvas
             id="pool-canvas"
             ref={canvasRef}

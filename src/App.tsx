@@ -3,6 +3,7 @@ import type { PeerManagerLike } from "p2play-core";
 import { RoomCodeBadge } from "p2play-core";
 import { TextChatPanel } from "p2play-core/chat";
 import { useGame } from "./hooks/useGame";
+import { useBoardExpand } from "./hooks/useBoardExpand";
 import { Lobby } from "./components/game/Lobby";
 import { PoolTable } from "./components/game/PoolTable";
 import { Scoreboard } from "./components/game/Scoreboard";
@@ -35,9 +36,17 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
   } = game;
 
   const showLobby = !gameState || gameState.phase === "LOBBY" || gameState.phase === "CONFIG";
+  const { expanded: boardExpanded, toggle: toggleExpand } = useBoardExpand(showLobby);
 
   return (
-    <div className="min-h-screen py-6 px-4 sm:px-6 lg:px-8 flex flex-col justify-between">
+    <div
+      className={
+        boardExpanded
+          ? "h-screen overflow-hidden flex flex-col relative"
+          : "min-h-screen py-6 px-4 sm:px-6 lg:px-8 flex flex-col justify-between"
+      }
+    >
+      {!boardExpanded && (
       <header className="max-w-7xl mx-auto w-full flex items-center justify-between mb-6 pb-4 border-b border-zinc-900">
         <div className="flex items-center gap-2">
           <span className="text-2xl leading-none" aria-hidden>🎱</span>
@@ -60,8 +69,15 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
           )}
         </div>
       </header>
+      )}
 
-      <main className="flex-1 w-full max-w-7xl mx-auto">
+      <main
+        className={
+          boardExpanded
+            ? "fixed inset-0 z-40 overflow-auto p-4 sm:p-6 bg-[radial-gradient(circle_at_center,#0a1f1a_0%,#09090b_100%)]"
+            : "flex-1 w-full max-w-7xl mx-auto"
+        }
+      >
         {showLobby ? (
           <Lobby
             myPeerId={myPeerId}
@@ -85,23 +101,15 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
             onExit={onExit}
           />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-4 lg:grid-rows-[auto_1fr] gap-4 items-start">
-            <div className="lg:col-span-3">
-              <Scoreboard state={gameState!} myPeerId={myPeerId} />
-            </div>
-            <aside className="relative z-20 lg:row-span-2 space-y-4 order-3 lg:order-none">
-              <div className="h-[220px]"><LogConsole logs={gameState!.logs} /></div>
-              <TextChatPanel
-                messages={chatMessages}
-                onSend={sendChatMessage}
-                title="Tchat"
-                placeholder="Message…"
-                emptyLabel="Aucun message."
-                className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-4 shadow-xl flex flex-col h-[220px] text-xs text-zinc-100 font-sans"
-                scrollbarAccent="emerald"
-              />
-            </aside>
-            <div className="lg:col-span-3 space-y-4 order-2 lg:order-none relative z-0 overflow-visible">
+          <div className="flex flex-col gap-4">
+            <Scoreboard
+              state={gameState!}
+              myPeerId={myPeerId}
+              boardExpanded={boardExpanded}
+              onToggleExpand={toggleExpand}
+            />
+            <div className={`grid grid-cols-1 lg:grid-cols-4 items-start ${boardExpanded ? "gap-6" : "gap-4"}`}>
+            <div className={`lg:col-span-3 space-y-4 relative z-0 min-w-0 ${boardExpanded ? "overflow-x-clip" : "overflow-visible"}`}>
               <PoolTable
                 state={gameState!}
                 isMyTurn={isMyTurn}
@@ -115,6 +123,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
                 onAim={setAim}
                 onSetCall={setCall}
                 onSetPushOut={setPushOut}
+                boardExpanded={boardExpanded}
               />
               {gameState!.phase === "GAME_OVER" && (
                 <div className="p-5 rounded-2xl bg-zinc-900/70 border border-amber-500/40 text-center">
@@ -129,10 +138,24 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
                 </div>
               )}
             </div>
+            <aside className="relative z-20 space-y-4">
+              <div className="h-[220px]"><LogConsole logs={gameState!.logs} /></div>
+              <TextChatPanel
+                messages={chatMessages}
+                onSend={sendChatMessage}
+                title="Tchat"
+                placeholder="Message…"
+                emptyLabel="Aucun message."
+                className="bg-zinc-950/45 backdrop-blur-md border border-zinc-700/60 rounded-3xl p-4 shadow-xl flex flex-col h-[220px] text-xs text-zinc-100 font-sans"
+                scrollbarAccent="emerald"
+              />
+            </aside>
+          </div>
           </div>
         )}
       </main>
 
+      {!boardExpanded && (
       <footer className="max-w-7xl mx-auto w-full text-center text-[10px] text-zinc-600 py-6 px-4 border-t border-zinc-900 flex justify-between items-center mt-8">
         <div>
           P2Play Billards - Réseau Privé Peer-to-Peer - Version v0.3.0
@@ -158,6 +181,7 @@ export default function App({ isEmbedded = false, externalPeerManager, playerNam
           <span>Dépôt GitHub</span>
         </a>
       </footer>
+      )}
 
       <RulesModal open={showRules} config={gameState?.config} onClose={() => setShowRules(false)} />
     </div>
