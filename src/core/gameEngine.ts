@@ -102,7 +102,7 @@ export class PoolGameEngine {
     if (!p) return false;
     p.id = newId;
     p.disconnected = false;
-    if (profile?.username) p.name = profile.username;
+    // Name stays as first seat — reconnect must not rename via client profile.
     if (profile?.avatar) p.avatar = profile.avatar;
     if (this.state.activeShooterId === oldId) this.state.activeShooterId = newId;
     if (this.state.pendingCall?.shooterId === oldId) {
