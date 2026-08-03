@@ -59,6 +59,9 @@ export interface ActionMessage extends NetworkMessage {
  * the other P2Play games and as a future extension point.
  */
 export function sanitizeGameState(state: GameState, _targetPlayerId: string): GameState {
+  if (typeof structuredClone === "function") {
+    return structuredClone(state);
+  }
   return JSON.parse(JSON.stringify(state));
 }
 

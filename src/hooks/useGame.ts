@@ -58,13 +58,13 @@ export function useGame(options?: UseGameOptions) {
       }
       return conn;
     };
-    const hostSanitized = sanitizeGameState(engineState, activePeerId);
-    p2p.peerManager.onStateReceived?.(JSON.parse(JSON.stringify(hostSanitized)));
+    const sanitized = sanitizeGameState(engineState, activePeerId);
+    p2p.peerManager.onStateReceived?.(sanitized);
     engineState.players.forEach((p) => {
       if (p.id === activePeerId) return;
       const conn = resolveConn(p.id);
       if (conn?.open) {
-        conn.send({ type: "STATE_UPDATE", state: sanitizeGameState(engineState, p.id) });
+        conn.send({ type: "STATE_UPDATE", state: sanitized });
         sent.add(p.id);
         sent.add(conn.peer);
       }
@@ -72,7 +72,7 @@ export function useGame(options?: UseGameOptions) {
     // Hub late-join: push state to any open peer not yet in the engine.
     peerManager.connections.forEach((conn, peerId) => {
       if (!conn.open || sent.has(peerId) || sent.has(conn.peer)) return;
-      conn.send({ type: "STATE_UPDATE", state: sanitizeGameState(engineState, peerId) });
+      conn.send({ type: "STATE_UPDATE", state: sanitized });
     });
   }, [myPeerId, peerManager, p2p.peerManager]);
 
