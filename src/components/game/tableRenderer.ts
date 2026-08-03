@@ -40,17 +40,30 @@ function drawDiamond(ctx: CanvasRenderingContext2D, x: number, y: number, size: 
   ctx.restore();
 }
 
-/** Draw wood rails, felt, cushions, pockets, and aim diamonds. */
-export function drawTable(
-  ctx: CanvasRenderingContext2D,
+let staticCacheCanvas: HTMLCanvasElement | null = null;
+let staticCacheKey = "";
+
+function renderStaticTable(
   v: ViewTransform,
   canvasW: number,
   canvasH: number,
-  timeMs = 0,
-  railPx = TABLE_RAIL_PX,
-  layout: TableLayout = POOL_LAYOUT,
-): void {
-  ctx.clearRect(0, 0, canvasW, canvasH);
+  railPx: number,
+  layout: TableLayout,
+): HTMLCanvasElement {
+  const key = `${canvasW}x${canvasH}_scale${v.scale.toFixed(4)}_ox${v.ox.toFixed(2)}_oy${v.oy.toFixed(2)}_rail${railPx}_layout${layout.width}x${layout.height}_pockets${layout.hasPockets}`;
+  if (staticCacheCanvas && staticCacheKey === key) {
+    return staticCacheCanvas;
+  }
+
+  if (!staticCacheCanvas) {
+    staticCacheCanvas = document.createElement("canvas");
+  }
+  staticCacheCanvas.width = canvasW;
+  staticCacheCanvas.height = canvasH;
+  staticCacheKey = key;
+
+  const ctx = staticCacheCanvas.getContext("2d");
+  if (!ctx) return staticCacheCanvas;
 
   const fx = v.ox;
   const fy = v.oy;
@@ -85,16 +98,6 @@ export function drawTable(
     ctx.fillRect(fx, fy, fw, fh);
     ctx.restore();
   }
-
-  const pulse = 0.12 + 0.03 * Math.sin(timeMs / 1800);
-  const halo = ctx.createRadialGradient(
-    fx + fw * 0.5, fy + fh * 0.45, fw * 0.05,
-    fx + fw * 0.5, fy + fh * 0.5, fw * 0.7,
-  );
-  halo.addColorStop(0, `rgba(20,122,86,${pulse + 0.18})`);
-  halo.addColorStop(1, "rgba(10,61,46,0)");
-  ctx.fillStyle = halo;
-  ctx.fillRect(fx, fy, fw, fh);
 
   ctx.strokeStyle = "#1a6b4f";
   ctx.lineWidth = CUSHION * v.scale;
@@ -132,27 +135,60 @@ export function drawTable(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  if (!layout.hasPockets) return;
-
-  for (const p of layout.pockets) {
-    const c = tableToCanvas(p, v);
-    const r = POCKET_RADIUS * v.scale;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, r + 3, 0, Math.PI * 2);
-    ctx.fillStyle = "#1a1008";
-    ctx.fill();
-    const hole = ctx.createRadialGradient(c.x, c.y, r * 0.15, c.x, c.y, r);
-    hole.addColorStop(0, "#111");
-    hole.addColorStop(0.7, "#000");
-    hole.addColorStop(1, "#050505");
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = hole;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(201,161,74,0.55)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+  if (layout.hasPockets) {
+    for (const p of layout.pockets) {
+      const c = tableToCanvas(p, v);
+      const r = POCKET_RADIUS * v.scale;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r + 3, 0, Math.PI * 2);
+      ctx.fillStyle = "#1a1008";
+      ctx.fill();
+      const hole = ctx.createRadialGradient(c.x, c.y, r * 0.15, c.x, c.y, r);
+      hole.addColorStop(0, "#111");
+      hole.addColorStop(0.7, "#000");
+      hole.addColorStop(1, "#050505");
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = hole;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(201,161,74,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
+
+  return staticCacheCanvas;
+}
+
+/** Draw wood rails, felt, cushions, pockets, and aim diamonds. */
+export function drawTable(
+  ctx: CanvasRenderingContext2D,
+  v: ViewTransform,
+  canvasW: number,
+  canvasH: number,
+  timeMs = 0,
+  railPx = TABLE_RAIL_PX,
+  layout: TableLayout = POOL_LAYOUT,
+): void {
+  ctx.clearRect(0, 0, canvasW, canvasH);
+
+  const cached = renderStaticTable(v, canvasW, canvasH, railPx, layout);
+  ctx.drawImage(cached, 0, 0);
+
+  const fx = v.ox;
+  const fy = v.oy;
+  const fw = layout.width * v.scale;
+  const fh = layout.height * v.scale;
+
+  const pulse = 0.12 + 0.03 * Math.sin(timeMs / 1800);
+  const halo = ctx.createRadialGradient(
+    fx + fw * 0.5, fy + fh * 0.45, fw * 0.05,
+    fx + fw * 0.5, fy + fh * 0.5, fw * 0.7,
+  );
+  halo.addColorStop(0, `rgba(20,122,86,${pulse + 0.18})`);
+  halo.addColorStop(1, "rgba(10,61,46,0)");
+  ctx.fillStyle = halo;
+  ctx.fillRect(fx, fy, fw, fh);
 }
 
 function roundRect(

@@ -11,6 +11,40 @@ interface UsePoolAnimationOptions {
   drawRef: React.MutableRefObject<((balls: Ball[]) => void) | null>;
 }
 
+function syncBallList(cur: Ball[], source: Ball[]): Ball[] {
+  if (cur.length !== source.length) {
+    return source.map((b) => ({
+      ...b,
+      pos: { x: b.pos.x, y: b.pos.y },
+      vel: { x: b.vel ? b.vel.x : 0, y: b.vel ? b.vel.y : 0 },
+    }));
+  }
+  for (let i = 0; i < source.length; i++) {
+    const s = source[i];
+    const c = cur[i];
+    c.id = s.id;
+    c.group = s.group;
+    c.pocketed = s.pocketed;
+    c.pocketIndex = s.pocketIndex;
+    c.angle = s.angle;
+    c.spinSide = s.spinSide;
+    c.spinTop = s.spinTop;
+    if (c.pos) {
+      c.pos.x = s.pos.x;
+      c.pos.y = s.pos.y;
+    } else {
+      c.pos = { x: s.pos.x, y: s.pos.y };
+    }
+    if (c.vel) {
+      c.vel.x = s.vel ? s.vel.x : 0;
+      c.vel.y = s.vel ? s.vel.y : 0;
+    } else {
+      c.vel = { x: s.vel ? s.vel.x : 0, y: s.vel ? s.vel.y : 0 };
+    }
+  }
+  return cur;
+}
+
 /**
  * Host: live engine balls.
  * Client mid-shot: lerp toward streamed SHOT_FRAME.
@@ -43,13 +77,17 @@ export function usePoolAnimation({
       lastTimeRef.current = now;
 
       if (isHost) {
-        displayRef.current = getAuthoritativeBalls().map((b) => ({ ...b }));
+        displayRef.current = syncBallList(displayRef.current, getAuthoritativeBalls());
       } else if (ballsInMotion && targetRef.current) {
         const target = targetRef.current;
         const cur = displayRef.current;
 
         if (cur.length !== target.length) {
-          displayRef.current = target.map((b) => ({ ...b, vel: b.vel ? { ...b.vel } : { x: 0, y: 0 } }));
+          displayRef.current = target.map((b) => ({
+            ...b,
+            pos: { x: b.pos.x, y: b.pos.y },
+            vel: { x: b.vel ? b.vel.x : 0, y: b.vel ? b.vel.y : 0 },
+          }));
         } else {
           for (let i = 0; i < target.length; i++) {
             const t = target[i];
@@ -65,19 +103,22 @@ export function usePoolAnimation({
 
             // Snap immediately if ball is pocketed or has large position mismatch
             if (t.pocketed || dist > 0.2) {
-              c.pos = { x: t.pos.x, y: t.pos.y };
-              c.vel = { ...tVel };
+              c.pos.x = t.pos.x;
+              c.pos.y = t.pos.y;
+              if (!c.vel) c.vel = { ...tVel };
+              else { c.vel.x = tVel.x; c.vel.y = tVel.y; }
             } else {
               // Dead-reckoning: integrate velocity over dt and smoothly correct position error
               c.pos.x += tVel.x * dt + (t.pos.x - c.pos.x) * 0.25;
               c.pos.y += tVel.y * dt + (t.pos.y - c.pos.y) * 0.25;
-              c.vel = { ...tVel };
+              if (!c.vel) c.vel = { ...tVel };
+              else { c.vel.x = tVel.x; c.vel.y = tVel.y; }
             }
           }
         }
       } else {
         // At rest / placing: authoritative state, no leftover shot-frame lerp.
-        displayRef.current = getStaticBalls().map((b) => ({ ...b }));
+        displayRef.current = syncBallList(displayRef.current, getStaticBalls());
       }
       drawRef.current?.(displayRef.current);
       raf = requestAnimationFrame(loop);
