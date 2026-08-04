@@ -28,12 +28,11 @@ export function LobbyHome({ status, error, hostRoom, joinRoom }: LobbyHomeProps)
       usernamePlaceholder="Entrez votre nom..."
       avatarLabel="Choisir un Avatar"
       createButtonText="Créer une Table"
-      compactHostSection
       joinCodeLabel="Code de la table"
       joinCodePlaceholder="CODE"
       joinButtonText="Rejoindre"
       joinLayout="side-by-side"
-      onHost={(username, avatar) => hostRoom(username, avatar)}
+      onCreateRoom={(_code, username, avatar, _enableVoice, _enableTextChat) => hostRoom(username, avatar)}
       onJoin={(username, avatar, roomCode) => joinRoom(username, avatar, roomCode)}
       classes={{
         root: "max-w-md mx-auto p-8 bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 rounded-3xl shadow-2xl relative",

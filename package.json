@@ -1,7 +1,7 @@
 {
   "name": "billard-p2play",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -22,7 +22,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.25.0",
-    "p2play-core": "github:gab371/p2play-core#v0.7.1",
+    "p2play-core": "github:gab371/p2play-core#v0.7.2",
     "peerjs": "^1.5.5",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
